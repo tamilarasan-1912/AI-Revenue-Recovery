@@ -15,6 +15,15 @@ from ..config import settings
 router = APIRouter()
 
 
+def _payment_entity(event: dict) -> dict:
+    """Accept both compact demo payloads and Razorpay's documented webhook shape."""
+    return (
+        event.get('entity')
+        or event.get('payload', {}).get('payment', {}).get('entity')
+        or {}
+    )
+
+
 @router.post('/razorpay')
 async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
@@ -29,17 +38,33 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail='Invalid JSON')
 
-    event_id = event.get('id') or f'evt_{uuid.uuid4().hex}'
-    entity = event.get('entity') or event.get('payload', {}).get('payment', {}).get('entity', {}) or {}
+    # Razorpay documents x-razorpay-event-id as the unique event identifier.
+    event_id = request.headers.get('x-razorpay-event-id') or event.get('id') or f'evt_{uuid.uuid4().hex}'
+    event_name = event.get('event', '')
+    entity = _payment_entity(event)
     payment_id = entity.get('id', 'unknown')
 
     if db.query(AuditLog).filter(AuditLog.event_id == event_id).first():
         return {'status': 'ignored', 'reason': 'duplicate_event', 'event_id': event_id}
 
     status = entity.get('status', 'pending')
-    db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=event_id, payment_id=payment_id,
-                    action='WEBHOOK_RECEIVED', outcome=status))
+    db.add(AuditLog(
+        id=f'audit_{uuid.uuid4().hex}',
+        event_id=event_id,
+        payment_id=payment_id,
+        action=event_name or 'WEBHOOK_RECEIVED',
+        outcome=status,
+    ))
     db.commit()
+
+    # A late payment.captured after payment.failed is valid and must not be
+    # mistaken for another failure. Razorpay explicitly documents this sequence.
+    if status in {'captured', 'authorized', 'success'}:
+        payment = db.query(Payment).filter(Payment.id == payment_id).first()
+        if payment:
+            payment.status = PaymentStatus.SUCCESS
+            db.commit()
+        return {'status': 'accepted', 'event_id': event_id, 'action': 'payment_state_updated'}
 
     if status != 'failed' or payment_id == 'unknown':
         return {'status': 'accepted', 'event_id': event_id, 'action': 'no_recovery_needed'}
@@ -49,6 +74,7 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         payment.status = PaymentStatus.FAILED
         payment.retry_count = int(entity.get('retry_count', payment.retry_count or 0))
         payment.failure_reason = entity.get('error_description', payment.failure_reason)
+        payment.payment_method = entity.get('method', payment.payment_method)
     else:
         payment = Payment(
             id=payment_id,
@@ -67,6 +93,9 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         'payment_method': payment.payment_method,
         'failure_reason': payment.failure_reason,
         'retry_count': payment.retry_count,
+        'customer_name': entity.get('notes', {}).get('customer_name') if isinstance(entity.get('notes'), dict) else None,
+        'customer_email': entity.get('email'),
+        'customer_contact': entity.get('contact'),
     }
     risk = analyze_risk(pdata)
     strat = recommend_strategy(pdata, risk)
@@ -91,6 +120,9 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         'retry_count': payment.retry_count,
         'expected_recovery_value': float(strat.get('expected_recovery_value', 0.0)),
         'fraud_signal': bool(risk.get('fraud_signal', False)),
+        'customer_name': pdata.get('customer_name'),
+        'customer_email': pdata.get('customer_email'),
+        'customer_contact': pdata.get('customer_contact'),
     }
     policy = policy_engine.evaluate(pcase)
     policy_id = f'policy_{uuid.uuid4().hex}'
@@ -118,6 +150,8 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
         'status': 'processed',
         'event_id': event_id,
         'case_id': case_id,
+        'risk': risk,
+        'strategy': strat,
         'policy': policy,
         'execution': exec_res,
     }
