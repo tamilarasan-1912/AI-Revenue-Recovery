@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = ''
     RAZORPAY_KEY_SECRET: str = ''
     RAZORPAY_WEBHOOK_SECRET: str = ''
+    ENABLE_RAZORPAY_TEST_ACTIONS: bool = False
     LLM_PROVIDER: str = 'deterministic'
     LLM_BASE_URL: str = ''
     LLM_API_KEY: str = ''
