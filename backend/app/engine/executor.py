@@ -24,8 +24,17 @@ class RecoveryExecutor:
                 'action': 'PAYMENT_LINK',
                 'execution_boundary': 'Test actions enabled but Razorpay credentials are missing',
             }
+        if not settings.RAZORPAY_KEY_ID.startswith('rzp_test_'):
+            return {
+                'mode': 'BLOCKED',
+                'action': 'PAYMENT_LINK',
+                'execution_boundary': 'Live Razorpay keys are rejected by the buildathon safety boundary',
+            }
 
         amount = int(round(float(case.get('amount', 0) or 0) * 100))
+        if amount <= 0:
+            return {'mode': 'BLOCKED', 'action': 'PAYMENT_LINK', 'execution_boundary': 'Invalid recovery amount'}
+
         payload = {
             'amount': amount,
             'currency': 'INR',
@@ -97,7 +106,7 @@ class RecoveryExecutor:
             details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Recovery deferred by policy'}
         elif action == ActionType.PAYMENT_LINK.value:
             details = self._create_test_payment_link(case)
-            status = 'RECOVERED' if details.get('short_url') else 'RECOVERY_ACTION_READY'
+            status = 'RECOVERY_ACTION_READY' if details.get('short_url') is None else 'RECOVERY_LINK_CREATED'
         elif case.get('is_recoverable') is False:
             status = 'NO_RECOVERY'
             details = {'mode': 'SIMULATION', 'action': action, 'reason': 'Synthetic case marked non-recoverable'}
