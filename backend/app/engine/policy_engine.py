@@ -23,6 +23,9 @@ class PolicyEngine:
         elif action == ActionType.RETRY.value and retry_count >= settings.MAX_RETRIES:
             decision = PolicyDecisionEnum.STOP
             rules.append('MAX_RETRIES_EXCEEDED')
+        elif action == ActionType.WAIT.value:
+            decision = PolicyDecisionEnum.HUMAN_REVIEW
+            rules.append('WAIT_FOR_LATER_RETRY_WINDOW')
         elif confidence < settings.MIN_CONFIDENCE_THRESHOLD:
             decision = PolicyDecisionEnum.HUMAN_REVIEW
             rules.append('LOW_CONFIDENCE')
@@ -35,7 +38,7 @@ class PolicyEngine:
 
         return {
             'decision': decision.value,
-            'policy_version': 'v1.1',
+            'policy_version': 'v1.2',
             'rules_triggered': rules,
         }
 
