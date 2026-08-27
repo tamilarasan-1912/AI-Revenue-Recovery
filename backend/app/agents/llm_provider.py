@@ -1,16 +1,13 @@
 """LLM boundary for RecoverAI.
 
-The provider is deliberately fail-safe: if no external model is configured,
-we use a deterministic, context-aware evaluator so the demo remains runnable.
-The model never receives permission to execute financial actions.
+The provider is fail-safe: if no external model is configured, or an external
+model is unavailable/returns invalid JSON, the contextual deterministic engine
+keeps the recovery workflow runnable. The model never receives execution authority.
 """
 import json
 import os
 import urllib.request
 from typing import Any
-
-
-ALLOWED_ACTIONS = {"RETRY", "PAYMENT_LINK", "HUMAN_ESCALATION", "STOP", "WAIT"}
 
 
 def _deterministic(prompt: str) -> dict[str, Any]:
@@ -21,13 +18,10 @@ def _deterministic(prompt: str) -> dict[str, Any]:
     amount = float(data.get("amount", 0) or 0)
     reason = str(data.get("failure_reason", "unknown")).lower()
     retries = int(data.get("retry_count", 0) or 0)
-    recoverable = data.get("is_recoverable", None)
-
     if "fraud" in reason:
         return {"revenue_at_risk": amount, "risk_score": 0.99, "failure_class": "fraud_suspected", "confidence": 0.97}
     if "insufficient" in reason:
-        risk = 0.72 if retries < 2 else 0.86
-        return {"revenue_at_risk": amount, "risk_score": risk, "failure_class": "insufficient_funds", "confidence": 0.90}
+        return {"revenue_at_risk": amount, "risk_score": 0.72 if retries < 2 else 0.86, "failure_class": "insufficient_funds", "confidence": 0.90}
     if "timeout" in reason or "bank" in reason:
         return {"revenue_at_risk": amount, "risk_score": 0.82, "failure_class": "temporary_bank_degradation", "confidence": 0.94}
     return {"revenue_at_risk": amount, "risk_score": 0.60, "failure_class": "unknown_payment_failure", "confidence": 0.68}
@@ -60,7 +54,10 @@ def _external_openai_compatible(prompt: str) -> dict[str, Any] | None:
         return None
     body = json.dumps({
         "model": model,
-        "messages": [{"role": "system", "content": "Return only valid JSON. Never execute financial actions."}, {"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": "Return only valid JSON. Never execute financial actions."},
+            {"role": "user", "content": prompt},
+        ],
         "temperature": 0,
         "response_format": {"type": "json_object"},
     }).encode()
@@ -72,7 +69,12 @@ def _external_openai_compatible(prompt: str) -> dict[str, Any] | None:
 
 class RecoveryLLMProvider:
     def generate_structured(self, prompt: str, schema: dict) -> dict[str, Any]:
-        result = _external_openai_compatible(prompt) if os.getenv("LLM_PROVIDER", "deterministic") == "openai_compatible" else None
+        result = None
+        if os.getenv("LLM_PROVIDER", "deterministic") == "openai_compatible":
+            try:
+                result = _external_openai_compatible(prompt)
+            except Exception:
+                result = None
         if result is None:
             result = _deterministic(prompt) if prompt.startswith("risk|") else _strategy(json.loads(prompt.split("|", 1)[1]))
         if not isinstance(result, dict):
