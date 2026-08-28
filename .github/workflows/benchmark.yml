@@ -20,12 +20,18 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: PYTHONPATH=. python scripts/run_benchmark.py
+      - name: Run reproducible 10K benchmark
+        run: PYTHONPATH=. python scripts/run_benchmark.py
         env:
           BENCHMARK_SIZE: 10000
           BENCHMARK_SEED: 42
           BENCHMARK_OUTPUT: benchmark-result.json
-      - uses: actions/upload-artifact@v4
+      - name: Verify benchmark artifact exists
+        run: test -s benchmark-result.json
+      - name: Upload benchmark result
+        uses: actions/upload-artifact@v4
         with:
           name: recoverai-10k-benchmark
           path: backend/benchmark-result.json
+          if-no-files-found: error
+          retention-days: 30
