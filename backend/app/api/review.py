@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment, ActionType
+from ..models import ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment, AuditLog
 from ..engine.executor import executor
 
 router = APIRouter()
@@ -16,17 +16,7 @@ def pending_reviews(db: Session = Depends(get_db)):
         policy = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.id == row.policy_decision_id).first()
         case = db.query(RecoveryCase).filter(RecoveryCase.id == (policy.recovery_case_id if policy else '')).first() if policy else None
         payment = db.query(Payment).filter(Payment.id == (case.payment_id if case else '')).first() if case else None
-        result.append({
-            'execution_id': row.id,
-            'case_id': case.id if case else None,
-            'payment_id': payment.id if payment else None,
-            'amount': payment.amount if payment else None,
-            'failure_reason': payment.failure_reason if payment else None,
-            'recommended_action': row.action.value if row.action else None,
-            'policy_decision_id': row.policy_decision_id,
-            'policy_rules': policy.rules_triggered if policy else [],
-            'created_at': row.created_at,
-        })
+        result.append({'execution_id': row.id, 'case_id': case.id if case else None, 'payment_id': payment.id if payment else None, 'amount': payment.amount if payment else None, 'failure_reason': payment.failure_reason if payment else None, 'recommended_action': row.action.value if row.action else None, 'policy_decision_id': row.policy_decision_id, 'policy_rules': policy.rules_triggered if policy else [], 'created_at': row.created_at})
     return result
 
 @router.post('/{execution_id}/decision')
@@ -48,24 +38,13 @@ def decide_review(execution_id: str, approved: bool, reviewer: str = 'merchant_r
     if not approved:
         row.status = 'REJECTED_BY_HUMAN'
         row.result_details = {**(row.result_details or {}), 'reason': 'Merchant rejected recovery action'}
+        db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'review_{row.id}', payment_id=payment.id, action=row.action.value, outcome='REJECTED_BY_HUMAN'))
         db.commit()
         return {'status': row.status, 'execution_id': row.id, 'review_decision': row.review_decision}
 
-    # Human approval is still subject to the same bounded executor and Test Mode boundary.
     row.status = 'PENDING'
     db.commit()
-    result = executor.execute(
-        db,
-        {
-            'case_id': case.id,
-            'payment_id': payment.id,
-            'amount': payment.amount,
-            'retry_count': payment.retry_count,
-            'recommended_action': row.action.value,
-            'ai_confidence': case.ai_confidence or 0.0,
-        },
-        'allow',
-        row.action.value,
-        row.policy_decision_id,
-    )
+    result = executor.execute(db, {'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'retry_count': payment.retry_count, 'recommended_action': row.action.value, 'ai_confidence': case.ai_confidence or 0.0}, 'allow', row.action.value, row.policy_decision_id)
+    db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'review_{row.id}', payment_id=payment.id, action=row.action.value, outcome=result['status']))
+    db.commit()
     return {'status': result['status'], 'execution_id': row.id, 'review_decision': row.review_decision, 'result_details': result.get('result_details', {})}
