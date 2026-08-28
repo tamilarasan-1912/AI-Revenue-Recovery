@@ -6,13 +6,14 @@ from .config import settings
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title='RecoverAI API', version='1.2.1')
+app = FastAPI(title='RecoverAI API', version='1.2.2')
 
+# Frontend is deployed on Vercel. The API is currently simulation-only and
+# does not use browser credentials, so wildcard CORS safely supports both
+# production and Vercel preview deployments.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://ai-revenue-recovery-nine.vercel.app",
-    ],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,5 +31,5 @@ def read_root():
         'message': 'RecoverAI API is running',
         'status': 'healthy',
         'execution_mode': 'simulation',
-        'version': '1.2.1'
+        'version': '1.2.2'
     }
