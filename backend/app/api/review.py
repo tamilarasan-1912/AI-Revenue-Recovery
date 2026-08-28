@@ -45,6 +45,15 @@ def create_demo_review_case(db: Session = Depends(get_db)):
         policy_version='v1.3',
         rules_triggered=['LOW_CONFIDENCE'],
     )
+
+    # Flush the parent records first so PostgreSQL has the policy decision
+    # available before the execution row is inserted. SQLAlchemy's add_all()
+    # does not guarantee this dependency order during a flush.
+    db.add(payment)
+    db.add(case)
+    db.add(policy)
+    db.flush()
+
     execution = ExecutionRecord(
         id=execution_id,
         policy_decision_id=policy_id,
@@ -61,7 +70,8 @@ def create_demo_review_case(db: Session = Depends(get_db)):
         outcome='PENDING_HUMAN_REVIEW',
     )
 
-    db.add_all([payment, case, policy, execution, audit])
+    db.add(execution)
+    db.add(audit)
     db.commit()
     return {
         'status': 'PENDING_HUMAN_REVIEW',
