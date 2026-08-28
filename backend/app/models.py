@@ -36,7 +36,7 @@ class PolicyDecisionRecord(Base):
     id = Column(String, primary_key=True, index=True)
     recovery_case_id = Column(String, ForeignKey('recovery_cases.id'), index=True)
     decision = Column(Enum(PolicyDecisionEnum), nullable=False)
-    policy_version = Column(String, default='v1.0')
+    policy_version = Column(String, default='v1.2')
     rules_triggered = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -48,6 +48,9 @@ class ExecutionRecord(Base):
     status = Column(String, nullable=False)
     idempotency_key = Column(String, unique=True, index=True)
     result_details = Column(JSON, nullable=True)
+    reviewed_by = Column(String, nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    review_decision = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class AuditLog(Base):
