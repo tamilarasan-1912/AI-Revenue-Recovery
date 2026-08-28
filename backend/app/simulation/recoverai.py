@@ -21,7 +21,12 @@ def _simulated_action_succeeds(payment: dict, action: str) -> bool:
 
 
 def run_recoverai(dataset):
-    """Evaluate RecoverAI on a synthetic cohort without exposing ground truth."""
+    """Evaluate RecoverAI on a synthetic cohort without exposing ground truth.
+
+    Synthetic benchmarking is intentionally deterministic and does not make
+    thousands of external LLM requests. Production decisions can still use
+    the configured external provider through the normal agent path.
+    """
     total = len(dataset)
     revenue_at_risk = sum(float(p.get('amount', 0) or 0) for p in dataset)
     recoverable_revenue = sum(float(p.get('amount', 0) or 0) for p in dataset if p.get('is_recoverable'))
@@ -36,8 +41,8 @@ def run_recoverai(dataset):
     action_counts = {}
 
     for p in dataset:
-        risk = analyze_risk(p)
-        strat = recommend_strategy(p, risk)
+        risk = analyze_risk(p, use_external=False)
+        strat = recommend_strategy(p, risk, use_external=False)
         action = strat['recommended_action']
         case = {
             'case_id': p['payment_id'], 'payment_id': p['payment_id'], 'amount': p['amount'],
