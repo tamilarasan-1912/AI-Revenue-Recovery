@@ -23,7 +23,11 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         if self.CORS_ORIGINS.strip() == '*':
             return ['*']
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(',') if origin.strip()]
+        origins = [origin.strip() for origin in self.CORS_ORIGINS.split(',') if origin.strip()]
+        production_frontend = 'https://ai-revenue-recovery-nine.vercel.app'
+        if production_frontend not in origins:
+            origins.append(production_frontend)
+        return origins
 
 
 @lru_cache()
