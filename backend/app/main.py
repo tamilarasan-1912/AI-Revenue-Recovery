@@ -5,7 +5,7 @@ from .api import webhooks, analytics, audit, simulation, review
 from .config import settings
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title='RecoverAI API', version='1.2.0')
+app = FastAPI(title='RecoverAI API', version='1.2.1')
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),
@@ -20,4 +20,4 @@ app.include_router(review.router, prefix='/api/review')
 
 @app.get('/')
 def read_root():
-    return {'message': 'RecoverAI API is running', 'status': 'healthy', 'execution_mode': 'simulation'}
+    return {'message': 'RecoverAI API is running', 'status': 'healthy', 'execution_mode': 'simulation', 'version': '1.2.1'}
