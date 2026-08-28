@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 
+declare global {
+  interface ImportMetaEnv { readonly VITE_API_URL?: string }
+  interface ImportMeta { readonly env: ImportMetaEnv }
+}
+
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 type Metrics = { revenue_at_risk: number; revenue_recovered: number; recovery_rate: number; unsafe_actions_blocked: number; human_escalations: number };
 
-function money(value: unknown) {
-  return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-}
+function money(value: unknown) { return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`; }
 
 function MetricCard({ label, value, hint, accent = false }: { label: string; value: string; hint?: string; accent?: boolean }) {
   return <div className={`rounded-2xl border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${accent ? 'border-blue-200 bg-blue-50/60' : 'border-slate-200 bg-white'}`}>
@@ -18,77 +21,38 @@ function MetricCard({ label, value, hint, accent = false }: { label: string; val
 }
 
 function PageHeader({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
-  return <div>
-    <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">{eyebrow}</p>
-    <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">{title}</h2>
-    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
-  </div>;
+  return <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">{eyebrow}</p><h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">{title}</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p></div>;
 }
 
 function Dashboard() {
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    fetch(`${API}/analytics/dashboard`).then(r => { if (!r.ok) throw new Error('Backend unavailable'); return r.json(); }).then(setMetrics).catch(e => setError(e.message));
-  }, []);
+  const [metrics, setMetrics] = useState<Metrics | null>(null); const [error, setError] = useState('');
+  useEffect(() => { fetch(`${API}/analytics/dashboard`).then(r => { if (!r.ok) throw new Error('Backend unavailable'); return r.json(); }).then(setMetrics).catch(e => setError(e.message)); }, []);
   return <div className="space-y-6">
     <PageHeader eyebrow="Revenue recovery control room" title="RecoverAI Executive Dashboard" description="Detect payment failures, diagnose root causes, apply deterministic safety policy, recover eligible revenue, and preserve a complete audit trail." />
     {error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{error}. Start the backend and refresh.</div>}
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-      <MetricCard label="Revenue at risk" value={money(metrics?.revenue_at_risk)} hint="Failed payment value" />
-      <MetricCard label="Revenue recovered" value={money(metrics?.revenue_recovered)} hint="Successful recovery" accent />
-      <MetricCard label="Recovery rate" value={`${metrics?.recovery_rate || 0}%`} hint="Recovered / at risk" />
-      <MetricCard label="Unsafe blocked" value={String(metrics?.unsafe_actions_blocked || 0)} hint="Policy prevented execution" />
-      <MetricCard label="Human escalations" value={String(metrics?.human_escalations || 0)} hint="Requires review" />
-    </div>
-    <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between"><h3 className="font-semibold text-slate-950">Decision pipeline</h3><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">5 stages</span></div>
-        <div className="mt-6 grid gap-3 sm:grid-cols-5">{['Payment failure','Diagnosis','AI proposal','Policy gate','Safe outcome'].map((x, i) => <div key={x} className="rounded-xl border border-slate-200 p-3 text-center"><div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">{i + 1}</div><p className="mt-2 text-xs font-medium text-slate-700">{x}</p></div>)}</div>
-      </section>
-      <section className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
-        <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Safety by design</p><h3 className="mt-2 text-xl font-bold text-slate-950">AI recommends. Policy decides.</h3>
-        <p className="mt-3 text-sm leading-6 text-slate-600">Fraud signals can block recovery, retry limits prevent repeated attempts, and low-confidence decisions are escalated to a human reviewer.</p>
-        <div className="mt-4 rounded-xl bg-slate-950 p-4 text-center text-sm font-semibold text-white">AI proposes → Policy controls → Executor acts</div>
-      </section>
-    </div>
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><MetricCard label="Revenue at risk" value={money(metrics?.revenue_at_risk)} hint="Failed payment value" /><MetricCard label="Revenue recovered" value={money(metrics?.revenue_recovered)} hint="Successful recovery" accent /><MetricCard label="Recovery rate" value={`${metrics?.recovery_rate || 0}%`} hint="Recovered / at risk" /><MetricCard label="Unsafe blocked" value={String(metrics?.unsafe_actions_blocked || 0)} hint="Policy prevented execution" /><MetricCard label="Human escalations" value={String(metrics?.human_escalations || 0)} hint="Requires review" /></div>
+    <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex items-center justify-between"><h3 className="font-semibold text-slate-950">Decision pipeline</h3><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">5 stages</span></div><div className="mt-6 grid gap-3 sm:grid-cols-5">{['Payment failure','Diagnosis','AI proposal','Policy gate','Safe outcome'].map((x, i) => <div key={x} className="rounded-xl border border-slate-200 p-3 text-center"><div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">{i + 1}</div><p className="mt-2 text-xs font-medium text-slate-700">{x}</p></div>)}</div></section><section className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm"><p className="text-xs font-bold uppercase tracking-wider text-blue-600">Safety by design</p><h3 className="mt-2 text-xl font-bold text-slate-950">AI recommends. Policy decides.</h3><p className="mt-3 text-sm leading-6 text-slate-600">Fraud signals can block recovery, retry limits prevent repeated attempts, and low-confidence decisions are escalated to a human reviewer.</p><div className="mt-4 rounded-xl bg-slate-950 p-4 text-center text-sm font-semibold text-white">AI proposes → Policy controls → Executor acts</div></section></div>
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600"><span className="font-semibold text-slate-900">Demo scope:</span> simulation mode only — no real-money movement.</div>
   </div>;
 }
 
 function SimulationLab() {
   const [size, setSize] = useState(10000); const [result, setResult] = useState<any>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  const run = () => { setLoading(true); setError(''); fetch(`${API}/simulation/run?size=${size}`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error('Simulation failed'); return r.json(); }).then(setResult).catch(e => setError(e.message)).finally(() => setLoading(false)); };
-  const baseline = result?.baseline_revenue_recovered ?? result?.baseline?.revenue_recovered ?? result?.baseline?.recovered_revenue;
-  const recoverai = result?.recoverai_revenue_recovered ?? result?.recoverai?.revenue_recovered ?? result?.recoverai?.recovered_revenue;
-  const incremental = result?.incremental_revenue ?? (typeof baseline === 'number' && typeof recoverai === 'number' ? recoverai - baseline : undefined);
-  return <div className="space-y-6">
-    <PageHeader eyebrow="Evidence" title="Simulation Lab" description="Run a controlled cohort comparison between blind retry behavior and RecoverAI's bounded recovery strategy." />
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div className="flex-1"><label className="text-sm font-semibold text-slate-700">Cohort size</label><input type="number" min="100" max="100000" value={size} onChange={e => setSize(Number(e.target.value))} className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></div><button disabled={loading} onClick={run} className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'Running evaluation…' : 'Run evaluation'}</button></div>
-      {error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
-      {result && <>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Revenue at risk" value={money(result.revenue_at_risk)} />
-          <MetricCard label="Baseline recovered" value={money(baseline)} />
-          <MetricCard label="RecoverAI recovered" value={money(recoverai)} accent />
-          <MetricCard label="Incremental revenue" value={money(incremental)} accent />
-        </div>
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Raw evaluation output</p><pre className="mt-3 max-h-72 overflow-auto text-xs leading-5 text-slate-700">{JSON.stringify(result, null, 2)}</pre></div>
-      </>}
-    </section>
-  </div>;
+  const run = () => { setLoading(true); setError(''); fetch(`${API}/simulation/run?size=${size}&seed=42`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error('Simulation failed'); return r.json(); }).then(setResult).catch(e => setError(e.message)).finally(() => setLoading(false)); };
+  const baseline = result?.baseline?.revenue_recovered;
+  const recoverai = result?.recoverai?.revenue_recovered;
+  return <div className="space-y-6"><PageHeader eyebrow="Evidence" title="Simulation Lab" description="Run a controlled, reproducible cohort comparison between blind retry behavior and RecoverAI's bounded recovery strategy." /><section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div className="flex-1"><label className="text-sm font-semibold text-slate-700" htmlFor="cohort-size">Cohort size</label><input id="cohort-size" type="number" min="100" max="100000" value={size} onChange={e => setSize(Number(e.target.value))} className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></div><button disabled={loading} onClick={run} className="rounded-xl bg-slate-950 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'Running evaluation…' : 'Run evaluation'}</button></div><p className="mt-3 text-xs text-slate-500">Seed: 42 · Channel-aware v2 scoring · Synthetic data only</p>{error && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}{result && !error && <><div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><MetricCard label="Revenue at risk" value={money(result.revenue_at_risk)} /><MetricCard label="Baseline recovered" value={money(baseline)} /><MetricCard label="RecoverAI recovered" value={money(recoverai)} accent /><MetricCard label="Incremental revenue" value={money(result.incremental_revenue)} hint={`${result.improvement_percentage ?? 0}% vs baseline`} accent /></div><div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><MetricCard label="Human review rate" value={`${result.human_review_rate ?? 0}%`} /><MetricCard label="Unsafe block rate" value={`${result.unsafe_block_rate ?? 0}%`} /><MetricCard label="Fraud stop rate" value={`${result.fraud_stop_rate ?? 0}%`} /><MetricCard label="Execution rate" value={`${result.intervention_execution_rate ?? 0}%`} /></div><pre className="mt-6 max-h-80 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-white">{JSON.stringify(result, null, 2)}</pre></>}</section></div>;
 }
 
 function ReviewQueue() {
   const [items, setItems] = useState<any[]>([]); const [message, setMessage] = useState('');
-  const load = () => fetch(`${API}/review/pending`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setItems).catch(() => setItems([]));
-  useEffect(load, []);
-  const decide = (id: string, approved: boolean) => { fetch(`${API}/review/${id}/decision?approved=${approved}&reviewer=merchant_reviewer`, { method: 'POST' }).then(r => r.json()).then(x => { setMessage(`${approved ? 'Approved' : 'Rejected'}: ${x.status}`); load(); }).catch(() => setMessage('Review action failed')); };
+  const load = () => { fetch(`${API}/review/pending`).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(setItems).catch(() => setItems([])); };
+  useEffect(() => { void load(); }, []);
+  const decide = (id: string, approved: boolean) => { fetch(`${API}/review/${id}/decision?approved=${approved}&reviewer=merchant_reviewer`, { method: 'POST' }).then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(x => { setMessage(`${approved ? 'Approved' : 'Rejected'}: ${x.status}`); void load(); }).catch(() => setMessage('Review action failed')); };
   return <div className="space-y-6"><PageHeader eyebrow="Governance" title="Human Review Queue" description="Low-confidence recovery decisions require merchant approval before execution." />{message && <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-sm">{message}</div>}<div className="space-y-4">{items.map(item => <div key={item.execution_id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><p className="text-xs uppercase tracking-wider text-slate-400">Payment</p><p className="mt-1 font-mono text-sm">{item.payment_id}</p></div><div><p className="text-xs uppercase tracking-wider text-slate-400">Amount</p><p className="mt-1 font-semibold">{money(item.amount)}</p></div><div><p className="text-xs uppercase tracking-wider text-slate-400">Recommended</p><p className="mt-1 font-semibold">{item.recommended_action}</p></div><div><p className="text-xs uppercase tracking-wider text-slate-400">Reason</p><p className="mt-1 text-sm">{item.failure_reason || 'Low AI confidence'}</p></div></div><div className="mt-5 flex gap-2"><button onClick={() => decide(item.execution_id, true)} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">Approve</button><button onClick={() => decide(item.execution_id, false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Reject</button></div></div>)}{items.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No pending human reviews.</div>}</div></div>;
 }
 
-function AuditLog() { const [logs, setLogs] = useState<any[]>([]); useEffect(() => { fetch(`${API}/audit/?limit=50`).then(r => r.json()).then(setLogs).catch(() => setLogs([])); }, []); return <div className="space-y-6"><PageHeader eyebrow="Traceability" title="Audit Log" description="Every recovery decision is recorded for inspection and accountability." /><div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b bg-slate-50"><tr>{['Event','Payment','Action','Outcome','Time'].map(h => <th key={h} className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{h}</th>)}</tr></thead><tbody>{logs.map((l: any) => <tr key={l.id} className="border-b last:border-0 hover:bg-slate-50"><td className="px-5 py-4 font-mono text-xs">{l.event_id}</td><td className="px-5 py-4 font-mono text-xs">{l.payment_id}</td><td className="px-5 py-4 font-medium">{l.action}</td><td className="px-5 py-4">{l.outcome}</td><td className="px-5 py-4 text-xs text-slate-500">{l.timestamp}</td></tr>)}</tbody></table></div>{logs.length === 0 && <p className="p-8 text-center text-sm text-slate-500">No audit events yet.</p>}</div></div>; }
+function AuditLog() { const [logs, setLogs] = useState<any[]>([]); useEffect(() => { fetch(`${API}/audit/?limit=50`).then(r => r.json()).then(setLogs).catch(() => setLogs([])); }, []); return <div className="space-y-6"><PageHeader eyebrow="Traceability" title="Audit Log" description="Every recovery decision is recorded for inspection and accountability." /><div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b bg-slate-50"><tr>{['Event','Payment','Action','Outcome','Time'].map(h => <th key={h} className="px-5 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{h}</th>)}</tr></thead><tbody>{logs.map((l: any) => <tr key={l.id} className="border-b last:border-0 hover:bg-slate-50"><td className="px-5 py-4 font-mono text-xs">{l.event_id}</td><td className="px-5 py-4 font-mono text-xs">{l.payment_id}</td><td className="px-5 py-4 font-medium">{l.action}</td><td className="px-5 py-4">{l.outcome}</td><td className="px-5 py-4 text-xs text-slate-500">{String(l.timestamp)}</td></tr>)}</tbody></table></div>{logs.length === 0 && <p className="p-8 text-center text-sm text-slate-500">No audit events yet.</p>}</div></div>; }
 
-const nav = [['/','Dashboard'],['/simulation','Simulation Lab'],['/review','Human Review'],['/audit','Audit Log']];
+const nav: Array<[string,string]> = [['/','Dashboard'],['/simulation','Simulation Lab'],['/review','Human Review'],['/audit','Audit Log']];
 export default function App() { return <BrowserRouter><div className="min-h-screen bg-slate-100 text-slate-900"><aside className="fixed inset-y-0 left-0 hidden w-64 flex-col bg-slate-950 p-6 text-white md:flex"><div><h1 className="text-2xl font-bold tracking-tight">Recover<span className="text-blue-400">AI</span></h1><p className="mt-1 text-xs text-slate-400">Revenue recovery control plane</p></div><nav className="mt-10 space-y-1">{nav.map(([to,label]) => <NavLink key={to} to={to} end={to === '/'} className={({isActive}) => `block rounded-xl px-4 py-3 text-sm font-medium transition ${isActive ? 'bg-white text-slate-950' : 'text-slate-300 hover:bg-white/10 hover:text-white'}`}>{label}</NavLink>)}</nav><div className="mt-auto rounded-xl border border-white/10 bg-white/5 p-4"><p className="text-xs font-bold uppercase tracking-wider text-blue-300">Simulation mode</p><p className="mt-1 text-xs leading-5 text-slate-400">No real-money movement</p></div></aside><div className="md:pl-64"><header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 px-5 py-3 backdrop-blur md:hidden"><div className="flex items-center justify-between"><span className="font-bold">Recover<span className="text-blue-600">AI</span></span><nav className="flex gap-1 overflow-x-auto">{nav.map(([to,label]) => <NavLink key={to} to={to} end={to === '/'} className={({isActive}) => `whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600'}`}>{label}</NavLink>)}</nav></div></header><main className="p-5 sm:p-7 lg:p-10"><Routes><Route path="/" element={<Dashboard />} /><Route path="/simulation" element={<SimulationLab />} /><Route path="/review" element={<ReviewQueue />} /><Route path="/audit" element={<AuditLog />} /></Routes></main></div></div></BrowserRouter>; }
