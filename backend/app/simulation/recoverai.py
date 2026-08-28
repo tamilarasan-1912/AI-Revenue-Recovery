@@ -3,12 +3,25 @@ from ..agents.strategy_agent import recommend_strategy
 from ..engine.policy_engine import policy_engine
 
 
-def run_recoverai(dataset):
-    """Evaluate RecoverAI on a synthetic cohort without hiding ground truth.
+def _simulated_action_succeeds(payment: dict, action: str) -> bool:
+    """Score a bounded recovery action against hidden synthetic ground truth.
 
-    Ground truth is used only to score outcomes; agents do not receive the
-    ``is_recoverable`` field.
+    The ground-truth field is never passed to the agents or policy engine.
+    It is used only after authorization to evaluate whether the chosen
+    intervention matches the synthetic payment-recovery channel.
     """
+    if not payment.get('is_recoverable', False):
+        return False
+    reason = str(payment.get('failure_reason', '')).lower()
+    if action == 'RETRY':
+        return reason == 'bank_timeout'
+    if action == 'PAYMENT_LINK':
+        return reason in {'insufficient_funds', 'bank_timeout'}
+    return False
+
+
+def run_recoverai(dataset):
+    """Evaluate RecoverAI on a synthetic cohort without exposing ground truth."""
     total = len(dataset)
     revenue_at_risk = sum(float(p.get('amount', 0) or 0) for p in dataset)
     recoverable_revenue = sum(float(p.get('amount', 0) or 0) for p in dataset if p.get('is_recoverable'))
@@ -50,7 +63,7 @@ def run_recoverai(dataset):
 
         if action in {'RETRY', 'PAYMENT_LINK'}:
             executed_interventions += 1
-            if p['is_recoverable']:
+            if _simulated_action_succeeds(p, action):
                 recovered += 1
                 revenue += p['amount']
 
