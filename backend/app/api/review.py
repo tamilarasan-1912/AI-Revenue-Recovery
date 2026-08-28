@@ -3,10 +3,75 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment, AuditLog
+from ..models import ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment, AuditLog, PaymentStatus, ActionType, PolicyDecisionEnum
 from ..engine.executor import executor
 
 router = APIRouter()
+
+@router.post('/demo')
+def create_demo_review_case(db: Session = Depends(get_db)):
+    """Create a synthetic low-confidence case for the live governance demo.
+
+    This never calls a payment provider. It creates the same database records
+    used by the review queue so the reviewer flow can be demonstrated safely.
+    """
+    token = uuid.uuid4().hex[:12]
+    payment_id = f'demo_payment_{token}'
+    case_id = f'demo_case_{token}'
+    policy_id = f'demo_policy_{token}'
+    execution_id = f'demo_execution_{token}'
+    amount = 12500.0
+    confidence = 0.42
+
+    payment = Payment(
+        id=payment_id,
+        amount=amount,
+        status=PaymentStatus.FAILED,
+        payment_method='card',
+        failure_reason='Synthetic demo: insufficient evidence for automatic recovery',
+        retry_count=0,
+    )
+    case = RecoveryCase(
+        id=case_id,
+        payment_id=payment_id,
+        revenue_at_risk=amount,
+        recommended_action=ActionType.RETRY,
+        ai_confidence=confidence,
+    )
+    policy = PolicyDecisionRecord(
+        id=policy_id,
+        recovery_case_id=case_id,
+        decision=PolicyDecisionEnum.HUMAN_REVIEW,
+        policy_version='v1.3',
+        rules_triggered=['LOW_CONFIDENCE'],
+    )
+    execution = ExecutionRecord(
+        id=execution_id,
+        policy_decision_id=policy_id,
+        action=ActionType.RETRY,
+        status='PENDING_HUMAN_REVIEW',
+        idempotency_key=f'demo_review_{token}',
+        result_details={'demo': True, 'ai_confidence': confidence, 'note': 'Synthetic case; no real-money movement'},
+    )
+    audit = AuditLog(
+        id=f'audit_{uuid.uuid4().hex}',
+        event_id=f'demo_created_{execution_id}',
+        payment_id=payment_id,
+        action=ActionType.RETRY.value,
+        outcome='PENDING_HUMAN_REVIEW',
+    )
+
+    db.add_all([payment, case, policy, execution, audit])
+    db.commit()
+    return {
+        'status': 'PENDING_HUMAN_REVIEW',
+        'payment_id': payment_id,
+        'case_id': case_id,
+        'execution_id': execution_id,
+        'ai_confidence': confidence,
+        'policy_rules': ['LOW_CONFIDENCE'],
+        'demo': True,
+    }
 
 @router.get('/pending')
 def pending_reviews(db: Session = Depends(get_db)):
