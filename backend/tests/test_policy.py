@@ -35,6 +35,18 @@ def test_low_confidence_escalates_to_human():
     assert result['decision'] == 'human_review'
 
 
+def test_explicit_human_escalation_is_reviewable():
+    result = PolicyEngine().evaluate({
+        'recommended_action': 'HUMAN_ESCALATION',
+        'ai_confidence': 0.90,
+        'retry_count': 0,
+        'expected_recovery_value': 500,
+        'fraud_signal': False,
+    })
+    assert result['decision'] == 'human_review'
+    assert 'EXPLICIT_HUMAN_ESCALATION' in result['rules_triggered']
+
+
 def test_wait_is_not_an_automatic_money_action():
     result = PolicyEngine().evaluate({
         'recommended_action': 'WAIT',
