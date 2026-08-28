@@ -24,9 +24,11 @@ class Settings(BaseSettings):
         if self.CORS_ORIGINS.strip() == '*':
             return ['*']
         origins = [origin.strip() for origin in self.CORS_ORIGINS.split(',') if origin.strip()]
-        production_frontend = 'https://ai-revenue-recovery-nine.vercel.app'
-        if production_frontend not in origins:
-            origins.append(production_frontend)
+        production_frontends = {
+            'https://ai-revenue-recovery-nine.vercel.app',
+            'https://frontend-bpkjb2id9-tamilarasan1.vercel.app',
+        }
+        origins.extend(origin for origin in production_frontends if origin not in origins)
         return origins
 
 
