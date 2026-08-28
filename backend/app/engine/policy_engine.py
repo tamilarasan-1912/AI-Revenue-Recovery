@@ -20,6 +20,9 @@ class PolicyEngine:
         elif fraud:
             decision = PolicyDecisionEnum.STOP
             rules.append('FRAUD_SIGNAL')
+        elif action == ActionType.HUMAN_ESCALATION.value:
+            decision = PolicyDecisionEnum.HUMAN_REVIEW
+            rules.append('EXPLICIT_HUMAN_ESCALATION')
         elif action == ActionType.RETRY.value and retry_count >= settings.MAX_RETRIES:
             decision = PolicyDecisionEnum.STOP
             rules.append('MAX_RETRIES_EXCEEDED')
@@ -38,7 +41,7 @@ class PolicyEngine:
 
         return {
             'decision': decision.value,
-            'policy_version': 'v1.2',
+            'policy_version': 'v1.3',
             'rules_triggered': rules,
         }
 
