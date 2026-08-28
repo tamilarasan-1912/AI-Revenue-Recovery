@@ -68,9 +68,9 @@ def _external_openai_compatible(prompt: str) -> dict[str, Any] | None:
 
 
 class RecoveryLLMProvider:
-    def generate_structured(self, prompt: str, schema: dict) -> dict[str, Any]:
+    def generate_structured(self, prompt: str, schema: dict, use_external: bool = True) -> dict[str, Any]:
         result = None
-        if os.getenv("LLM_PROVIDER", "deterministic") == "openai_compatible":
+        if use_external and os.getenv("LLM_PROVIDER", "deterministic") == "openai_compatible":
             try:
                 result = _external_openai_compatible(prompt)
             except Exception:
