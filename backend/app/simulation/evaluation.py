@@ -3,7 +3,15 @@ from .recoverai import run_recoverai
 from .generate_dataset import generate_dataset
 
 
+BENCHMARK_VERSION = 'channel-aware-v2'
+
+
 def run_evaluation(dataset_size: int = 10000, seed: int = 42):
+    """Run a reproducible, channel-aware Track 03 evaluation.
+
+    Ground truth stays hidden from the agents and is used only for scoring
+    the outcome of the authorized intervention against the baseline.
+    """
     dataset = generate_dataset(dataset_size, seed=seed)
     base = run_baseline(dataset)
     rec = run_recoverai(dataset)
@@ -11,6 +19,7 @@ def run_evaluation(dataset_size: int = 10000, seed: int = 42):
     incremental = rec['revenue_recovered'] - baseline_revenue
     improvement = (incremental / baseline_revenue * 100) if baseline_revenue > 0 else 0.0
     return {
+        'benchmark_version': BENCHMARK_VERSION,
         'dataset_size': dataset_size,
         'seed': seed,
         'baseline': base,
