@@ -26,33 +26,32 @@ def _normalize_rows(payload: dict):
         if missing:
             raise HTTPException(status_code=400, detail=f'Row {index} is missing: {", ".join(missing)}')
         try:
-            amount = float(row['amount'])
-            retry_count = int(row['retry_count'])
+            amount = float(row['amount']); retry_count = int(row['retry_count'])
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail=f'Row {index} has invalid amount or retry_count.')
         if amount < 0 or retry_count < 0:
             raise HTTPException(status_code=400, detail=f'Row {index} has negative amount or retry_count.')
-        payment_id = str(row['payment_id']).strip()
-        failure_reason = str(row['failure_reason']).strip().lower()
+        payment_id = str(row['payment_id']).strip(); failure_reason = str(row['failure_reason']).strip().lower()
         if not payment_id or not failure_reason:
             raise HTTPException(status_code=400, detail=f'Row {index} must have payment_id and failure_reason.')
-        raw_label = row['is_recoverable']
-        is_recoverable = raw_label if isinstance(raw_label, bool) else str(raw_label).strip().lower() in {'true', '1', 'yes', 'y'}
+        raw_label = row['is_recoverable']; is_recoverable = raw_label if isinstance(raw_label, bool) else str(raw_label).strip().lower() in {'true', '1', 'yes', 'y'}
         normalized.append({'payment_id': payment_id, 'amount': amount, 'failure_reason': failure_reason, 'retry_count': retry_count, 'is_recoverable': is_recoverable})
     return normalized
 
 
-def _rows_from_db(db):
-    rows = db.query(ImportedDatasetRow).order_by(ImportedDatasetRow.created_at.desc()).limit(100000).all()
+def _latest_batch_rows(db):
+    latest = db.query(ImportedDatasetRow.batch_id).order_by(ImportedDatasetRow.created_at.desc(), ImportedDatasetRow.row_number.desc()).first()
+    if not latest:
+        return []
+    rows = db.query(ImportedDatasetRow).filter(ImportedDatasetRow.batch_id == latest[0]).order_by(ImportedDatasetRow.row_number.asc()).limit(100000).all()
     return [{'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable} for r in rows]
 
 
 @router.get('/model-status')
 def model_status(db: Session = Depends(get_db)):
-    if ml_model.training_rows == 0:
-        rows = _rows_from_db(db)
-        if rows:
-            ml_model.fit(rows)
+    rows = _latest_batch_rows(db)
+    if rows and ml_model.training_rows != len(rows):
+        ml_model.fit(rows)
     return ml_model.status()
 
 
@@ -81,31 +80,22 @@ def run_uploaded_dataset(payload: dict):
     normalized = _normalize_rows(payload)
     ml_status = ml_model.fit(normalized)
     result = run_dataset_evaluation(normalized)
-    result['dataset_source'] = 'uploaded_csv'
-    result['records_preview'] = normalized[:100]
-    result['ml_model'] = ml_status
+    result['dataset_source'] = 'uploaded_csv'; result['records_preview'] = normalized[:100]; result['ml_model'] = ml_status
     return result
 
 
 @router.post('/import-dataset')
 def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
-    """Persist the uploaded CSV and retrain RecoverAI's ML model from it."""
-    normalized = _normalize_rows(payload)
-    batch_id = uuid.uuid4().hex[:10]
-    imported_rows, payments = [], []
+    normalized = _normalize_rows(payload); batch_id = uuid.uuid4().hex[:10]; imported_rows, payments = [], []
     for index, row in enumerate(normalized, start=1):
         imported_rows.append(ImportedDatasetRow(id=f'csvrow_{batch_id}_{index}', batch_id=batch_id, row_number=index, payment_id=row['payment_id'], amount=row['amount'], failure_reason=row['failure_reason'], retry_count=row['retry_count'], is_recoverable=row['is_recoverable']))
         safe_id = re.sub(r'[^A-Za-z0-9_.-]+', '_', row['payment_id'])[:80] or f'row_{index}'
         payments.append(Payment(id=f'csv_{batch_id}_{index}_{safe_id}', amount=row['amount'], status=PaymentStatus.FAILED, payment_method=f'csv_demo:{batch_id}', failure_reason=row['failure_reason'], retry_count=row['retry_count']))
     try:
-        db.add_all(imported_rows)
-        db.add_all(payments)
-        db.commit()
+        db.add_all(imported_rows); db.add_all(payments); db.commit()
     except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f'Could not import dataset: {exc.__class__.__name__}')
-    ml_status = ml_model.fit(normalized)
-    evaluation = evaluate_database_payments(db, limit=len(normalized), batch_id=batch_id)
+        db.rollback(); raise HTTPException(status_code=409, detail=f'Could not import dataset: {exc.__class__.__name__}')
+    ml_status = ml_model.fit(normalized); evaluation = evaluate_database_payments(db, limit=len(normalized), batch_id=batch_id)
     return {'status': 'IMPORTED', 'batch_id': batch_id, 'records_imported': len(normalized), 'dataset_source': 'uploaded_csv_database', 'read_only_after_import': True, 'ml_model': ml_status, 'evaluation': evaluation}
 
 
