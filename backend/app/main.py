@@ -1,20 +1,30 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from .config import settings
 from .database import engine, Base, _get_fallback_sessionmaker
 from .api import webhooks, analytics, audit, simulation, review, failure_injection, system, payments, recovery
 
 try:
     Base.metadata.create_all(bind=engine)
+    # create_all does not add newly introduced columns to existing tables.
+    # Ensure the optional ML feature store exists before endpoints query it.
+    inspector = inspect(engine)
+    if inspector.has_table('imported_dataset_rows') and 'features' not in {c['name'] for c in inspector.get_columns('imported_dataset_rows')}:
+        with engine.begin() as conn:
+            if engine.dialect.name == 'postgresql':
+                conn.execute(text('ALTER TABLE imported_dataset_rows ADD COLUMN IF NOT EXISTS features JSONB'))
+            else:
+                conn.execute(text('ALTER TABLE imported_dataset_rows ADD COLUMN features JSON'))
 except Exception:
     _get_fallback_sessionmaker()
 
-app = FastAPI(title='RecoverAI API', version='1.4.0')
+app = FastAPI(title='RecoverAI API', version='1.4.1')
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),
-    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\.vercel\.app$',
+    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\\.vercel\\.app$',
     allow_credentials=False,
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
@@ -37,5 +47,5 @@ def read_root():
         'message': 'RecoverAI API is running',
         'status': 'healthy',
         'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
-        'version': '1.4.0',
+        'version': '1.4.1',
     }
