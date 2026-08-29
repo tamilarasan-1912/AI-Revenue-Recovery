@@ -84,13 +84,46 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
 
 @router.get('/pending')
 def pending_reviews(db: Session = Depends(get_db)):
-    rows = db.query(ExecutionRecord).filter(ExecutionRecord.status == 'PENDING_HUMAN_REVIEW').order_by(ExecutionRecord.created_at.asc()).all()
+    """Return reviewable cases without allowing one malformed legacy row to break the queue."""
+    rows = db.query(ExecutionRecord).filter(
+        ExecutionRecord.status == 'PENDING_HUMAN_REVIEW'
+    ).order_by(ExecutionRecord.created_at.asc()).all()
+
     result = []
+    skipped = 0
     for row in rows:
-        policy = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.id == row.policy_decision_id).first()
-        case = db.query(RecoveryCase).filter(RecoveryCase.id == (policy.recovery_case_id if policy else '')).first() if policy else None
-        payment = db.query(Payment).filter(Payment.id == (case.payment_id if case else '')).first() if case else None
-        result.append({'execution_id': row.id, 'case_id': case.id if case else None, 'payment_id': payment.id if payment else None, 'amount': payment.amount if payment else None, 'failure_reason': payment.failure_reason if payment else None, 'recommended_action': row.action.value if row.action else None, 'policy_decision_id': row.policy_decision_id, 'policy_rules': policy.rules_triggered if policy else [], 'ai_confidence': case.ai_confidence if case else None, 'created_at': row.created_at})
+        try:
+            policy = db.query(PolicyDecisionRecord).filter(
+                PolicyDecisionRecord.id == row.policy_decision_id
+            ).first()
+            case = db.query(RecoveryCase).filter(
+                RecoveryCase.id == (policy.recovery_case_id if policy else '')
+            ).first() if policy else None
+            payment = db.query(Payment).filter(
+                Payment.id == (case.payment_id if case else '')
+            ).first() if case else None
+
+            # A stale/incomplete record should not make the entire queue fail.
+            if not policy or not case or not payment:
+                skipped += 1
+                continue
+
+            result.append({
+                'execution_id': row.id,
+                'case_id': case.id,
+                'payment_id': payment.id,
+                'amount': payment.amount,
+                'failure_reason': payment.failure_reason,
+                'recommended_action': row.action.value if row.action else None,
+                'policy_decision_id': row.policy_decision_id,
+                'policy_rules': policy.rules_triggered or [],
+                'ai_confidence': case.ai_confidence,
+                'created_at': row.created_at,
+            })
+        except Exception:
+            # Keep the merchant queue available even when historical demo data is imperfect.
+            skipped += 1
+
     return result
 
 
