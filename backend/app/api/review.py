@@ -11,6 +11,8 @@ from ..agents.strategy_agent import recommend_strategy
 from ..engine.executor import executor
 from ..engine.policy_engine import policy_engine
 from ..ml_model import ml_model
+from ..recovery_playbook import build_recovery_plan
+from ..config import settings
 
 router = APIRouter(); logger = logging.getLogger(__name__)
 
@@ -50,17 +52,9 @@ def _dataset_row_for_case(db: Session, low_confidence: bool = False):
     rows = _active_batch_rows(db)
     if not rows:
         raise HTTPException(status_code=409, detail='Upload a CSV dataset in Data & Datasets first. RecoverAI no longer uses pre-installed cases.')
-
-    records = [
-        {'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason,
-         'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable}
-        for r in rows
-    ]
+    records = [{'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable} for r in rows]
     if ml_model.model is None or ml_model.training_rows != len(records):
         ml_model.fit(records)
-
-    # One sklearn call for the complete batch. This is substantially faster than
-    # calling predict() once per row and prevents hosted API gateway timeouts.
     predictions = ml_model.predict_many(records)
     scored = list(zip(rows, predictions))
     return min(scored, key=lambda item: item[1]['confidence']) if low_confidence else random.choice(scored)
@@ -72,16 +66,19 @@ def create_dataset_review_case(scenario: str | None = Query(None), db: Session =
         source, ml_prediction = _dataset_row_for_case(db, low_confidence=(scenario == 'LOW_CONFIDENCE_HUMAN_REVIEW'))
         data = {'payment_id': source.payment_id, 'amount': float(source.amount), 'failure_reason': source.failure_reason, 'retry_count': int(source.retry_count), 'ml_recoverability': ml_prediction['recoverability_probability'], 'ml_confidence': ml_prediction['confidence']}
         risk = analyze_risk(data, use_external=False); strategy = recommend_strategy(data, risk, use_external=False); action = strategy['recommended_action']
-        policy_result = policy_engine.evaluate({'case_id': source.id, 'payment_id': source.payment_id, 'amount': data['amount'], 'recommended_action': action, 'ai_confidence': strategy['confidence'], 'retry_count': data['retry_count'], 'expected_recovery_value': strategy.get('expected_recovery_value', 0.0), 'fraud_signal': risk.get('fraud_signal', False)})
+        recovery_plan = build_recovery_plan(data, max_retries=settings.MAX_RETRIES, retry_delays_hours=settings.retry_delay_hours(), rescue_window_days=settings.RESCUE_WINDOW_DAYS)
+        if action == ActionType.RETRY.value and not recovery_plan['retryable']:
+            action = recovery_plan['recommended_action']
+        policy_result = policy_engine.evaluate({'case_id': source.id, 'payment_id': source.payment_id, 'amount': data['amount'], 'recommended_action': action, 'ai_confidence': strategy['confidence'], 'retry_count': data['retry_count'], 'expected_recovery_value': strategy.get('expected_recovery_value', 0.0), 'fraud_signal': risk.get('fraud_signal', False), 'recovery_plan': recovery_plan})
         decision_enum = PolicyDecisionEnum(policy_result['decision']); token = uuid.uuid4().hex[:12]; payment_id = f'dataset_payment_{token}'; case_id = f'dataset_case_{token}'; policy_id = f'dataset_policy_{token}'; execution_id = f'dataset_execution_{token}'
         payment = Payment(id=payment_id, amount=data['amount'], status=PaymentStatus.FAILED, payment_method='uploaded_csv', failure_reason=data['failure_reason'], retry_count=data['retry_count']); db.add(payment); db.flush()
         case = RecoveryCase(id=case_id, payment_id=payment_id, revenue_at_risk=data['amount'], recommended_action=ActionType(action), ai_confidence=strategy['confidence']); db.add(case); db.flush()
         policy = PolicyDecisionRecord(id=policy_id, recovery_case_id=case_id, decision=decision_enum, policy_version=policy_result['policy_version'], rules_triggered=policy_result['rules_triggered']); db.add(policy); db.flush()
         status = 'PENDING_HUMAN_REVIEW' if decision_enum is PolicyDecisionEnum.HUMAN_REVIEW else ('STOPPED' if decision_enum is PolicyDecisionEnum.STOP else ('BLOCKED' if decision_enum is PolicyDecisionEnum.BLOCK else 'PENDING'))
         attempt = data['retry_count'] if action == 'RETRY' else 0
-        execution = ExecutionRecord(id=execution_id, policy_decision_id=policy_id, action=ActionType(action), status=status, idempotency_key=f'recover:{case_id}:{action}:{attempt}', result_details={'dataset_row_id': source.id, 'source_batch': source.batch_id, 'actual_is_recoverable': bool(source.is_recoverable), 'ml_prediction': ml_prediction, 'risk_score': risk.get('risk_score'), 'failure_class': risk.get('failure_class'), 'policy_decision': decision_enum.value}); db.add(execution); db.flush()
+        execution = ExecutionRecord(id=execution_id, policy_decision_id=policy_id, action=ActionType(action), status=status, idempotency_key=f'recover:{case_id}:{action}:{attempt}', result_details={'dataset_row_id': source.id, 'source_batch': source.batch_id, 'actual_is_recoverable': bool(source.is_recoverable), 'ml_prediction': ml_prediction, 'risk_score': risk.get('risk_score'), 'failure_class': risk.get('failure_class'), 'policy_decision': decision_enum.value, 'recovery_plan': recovery_plan}); db.add(execution); db.flush()
         db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'dataset_created_{execution_id}', payment_id=payment_id, action=action, outcome=status)); db.commit()
-        return {'status': status, 'payment_id': payment_id, 'case_id': case_id, 'execution_id': execution_id, 'amount': data['amount'], 'failure_reason': data['failure_reason'], 'recommended_action': action, 'ai_confidence': strategy['confidence'], 'ml_recoverability': ml_prediction['recoverability_probability'], 'ml_confidence': ml_prediction['confidence'], 'scenario': 'UPLOADED_DATASET', 'policy_decision': decision_enum.value, 'policy_rules': policy_result['rules_triggered'], 'policy_version': policy_result['policy_version'], 'requires_human_review': decision_enum is PolicyDecisionEnum.HUMAN_REVIEW, 'can_execute': decision_enum is PolicyDecisionEnum.ALLOW, 'dataset_row_id': source.id, 'source_batch': source.batch_id}
+        return {'status': status, 'payment_id': payment_id, 'case_id': case_id, 'execution_id': execution_id, 'amount': data['amount'], 'failure_reason': data['failure_reason'], 'recommended_action': action, 'ai_confidence': strategy['confidence'], 'ml_recoverability': ml_prediction['recoverability_probability'], 'ml_confidence': ml_prediction['confidence'], 'scenario': 'UPLOADED_DATASET', 'policy_decision': decision_enum.value, 'policy_rules': policy_result['rules_triggered'], 'policy_version': policy_result['policy_version'], 'requires_human_review': decision_enum is PolicyDecisionEnum.HUMAN_REVIEW, 'can_execute': decision_enum is PolicyDecisionEnum.ALLOW, 'dataset_row_id': source.id, 'source_batch': source.batch_id, 'recovery_plan': recovery_plan}
     except HTTPException:
         db.rollback(); raise
     except Exception as exc:
@@ -95,7 +92,7 @@ def pending_reviews(db: Session = Depends(get_db)):
         try:
             policy = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.id == row.policy_decision_id).first(); case = db.query(RecoveryCase).filter(RecoveryCase.id == (policy.recovery_case_id if policy else '')).first() if policy else None; payment = db.query(Payment).filter(Payment.id == (case.payment_id if case else '')).first() if case else None
             if not policy or not case or not payment: continue
-            result.append({'execution_id': row.id, 'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'failure_reason': payment.failure_reason, 'recommended_action': row.action.value if row.action else None, 'policy_decision_id': row.policy_decision_id, 'policy_rules': policy.rules_triggered or [], 'ai_confidence': case.ai_confidence, 'created_at': row.created_at, 'ml_prediction': (row.result_details or {}).get('ml_prediction')})
+            result.append({'execution_id': row.id, 'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'failure_reason': payment.failure_reason, 'recommended_action': row.action.value if row.action else None, 'policy_rules': policy.rules_triggered or [], 'ai_confidence': case.ai_confidence, 'created_at': row.created_at, 'ml_prediction': (row.result_details or {}).get('ml_prediction'), 'recovery_plan': (row.result_details or {}).get('recovery_plan')})
         except Exception: logger.exception('Skipping malformed review row: %s', row.id)
     return result
 
