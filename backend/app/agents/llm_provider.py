@@ -48,9 +48,9 @@ def _deterministic(prompt: str) -> dict[str, Any]:
     plan = build_recovery_plan(data)
     action = plan['recommended_action']
 
-    # The ML score is the learned recovery signal. The playbook supplies the
-    # operational response for the failure class, preventing blind retries.
-    if p is not None and action == 'RETRY' and p < 0.65:
+    if reason == 'insufficient_funds':
+        action = 'PAYMENT_LINK'
+    elif p is not None and action == 'RETRY' and p < 0.65:
         plan = build_recovery_plan({**data, 'ml_recoverability': p})
         action = plan['recommended_action']
 
