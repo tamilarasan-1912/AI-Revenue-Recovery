@@ -3,9 +3,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Production deployments should provide DATABASE_URL. If it is omitted,
-    # use SQLite instead of the old localhost PostgreSQL default, which made
-    # every DB-backed API route fail when Postgres was not configured.
     DATABASE_URL: str = 'sqlite:///./recoverai.db'
     RAZORPAY_KEY_ID: str = ''
     RAZORPAY_KEY_SECRET: str = ''
@@ -19,6 +16,8 @@ class Settings(BaseSettings):
     MIN_CONFIDENCE_THRESHOLD: float = 0.70
     INTERVENTION_COST: float = 5.0
     MAX_CUSTOMER_CONTACTS: int = 2
+    RETRY_DELAYS_HOURS: str = '24,72,168'
+    RESCUE_WINDOW_DAYS: int = 30
     ALLOWED_ACTIONS: list[str] = ['RETRY', 'PAYMENT_LINK', 'HUMAN_ESCALATION', 'STOP', 'WAIT']
     CORS_ORIGINS: str = '*'
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
@@ -34,6 +33,13 @@ class Settings(BaseSettings):
         }
         origins.extend(origin for origin in production_frontends if origin not in origins)
         return origins
+
+    def retry_delay_hours(self) -> tuple[int, ...]:
+        try:
+            values = tuple(max(1, int(x.strip())) for x in self.RETRY_DELAYS_HOURS.split(',') if x.strip())
+            return values or (24, 72, 168)
+        except ValueError:
+            return (24, 72, 168)
 
 
 @lru_cache()
