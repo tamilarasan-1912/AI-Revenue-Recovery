@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+from ..database import get_db
+from ..simulation.database_evaluation import evaluate_database_payments
 from ..simulation.evaluation import run_dataset_evaluation, run_evaluation
 
 router = APIRouter()
@@ -48,3 +51,12 @@ def run_uploaded_dataset(payload: dict):
     result = run_dataset_evaluation(normalized)
     result['dataset_source'] = 'uploaded_csv'
     return result
+
+
+@router.get('/evaluate-database')
+def evaluate_database(
+    limit: int = Query(1000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    """Analyze failed payments from PostgreSQL in read-only mode."""
+    return evaluate_database_payments(db, limit=limit)
