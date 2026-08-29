@@ -1,4 +1,5 @@
 import uuid
+import random
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,7 +42,7 @@ def _dataset_row_for_case(db: Session, low_confidence: bool = False):
     records = [{'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable} for r in rows]
     ml_model.fit(records)
     scored = [(r, ml_model.predict({'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count})) for r in rows]
-    return min(scored, key=lambda item: item[1]['confidence']) if low_confidence else scored[0]
+    return min(scored, key=lambda item: item[1]['confidence']) if low_confidence else random.choice(scored)
 
 
 @router.post('/demo')
