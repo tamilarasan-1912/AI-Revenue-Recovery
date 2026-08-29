@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Payment, PaymentStatus
+from ..models import ImportedDatasetRow, Payment, PaymentStatus
 from ..simulation.database_evaluation import evaluate_database_payments
 from ..simulation.evaluation import run_dataset_evaluation, run_evaluation, run_multi_seed_evaluation
 
@@ -31,10 +31,16 @@ def _normalize_rows(payload: dict):
             raise HTTPException(status_code=400, detail=f'Row {index} has invalid amount or retry_count.')
         if amount < 0 or retry_count < 0:
             raise HTTPException(status_code=400, detail=f'Row {index} has negative amount or retry_count.')
+        payment_id = str(row['payment_id']).strip()
+        failure_reason = str(row['failure_reason']).strip().lower()
+        if not payment_id:
+            raise HTTPException(status_code=400, detail=f'Row {index} has an empty payment_id.')
+        if not failure_reason:
+            raise HTTPException(status_code=400, detail=f'Row {index} has an empty failure_reason.')
         normalized.append({
-            'payment_id': str(row['payment_id']).strip(),
+            'payment_id': payment_id,
             'amount': amount,
-            'failure_reason': str(row['failure_reason']).strip(),
+            'failure_reason': failure_reason,
             'retry_count': retry_count,
             'is_recoverable': str(row['is_recoverable']).strip().lower() in {'true', '1', 'yes', 'y'},
         })
@@ -57,6 +63,7 @@ def run_multi_seed(size: int = Query(10000, ge=100, le=50000), seeds: str = Quer
 
 @router.post('/run-dataset')
 def run_uploaded_dataset(payload: dict):
+    """Evaluate exactly the rows supplied by the user; no synthetic generator is used."""
     normalized = _normalize_rows(payload)
     result = run_dataset_evaluation(normalized)
     result['dataset_source'] = 'uploaded_csv'
@@ -66,19 +73,31 @@ def run_uploaded_dataset(payload: dict):
 
 @router.post('/import-dataset')
 def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
-    """Explicitly copy an uploaded CSV into the demo PostgreSQL dataset.
+    """Persist a user CSV as a uniquely identified dataset batch.
 
-    This never calls a payment provider. Imported records are tagged with a
-    unique batch id so the UI can evaluate exactly the dataset just imported.
+    The uploaded is_recoverable field is stored only for post-policy outcome
+    scoring. It is never passed into risk, strategy, or policy decisions.
+    No payment provider is called and imported rows are simulation-only.
     """
     normalized = _normalize_rows(payload)
     batch_id = uuid.uuid4().hex[:10]
-    inserted = []
+    imported_rows = []
+    payments = []
     for index, row in enumerate(normalized, start=1):
         safe_id = re.sub(r'[^A-Za-z0-9_.-]+', '_', row['payment_id'])[:80] or f'row_{index}'
-        payment_id = f'csv_{batch_id}_{index}_{safe_id}'
-        inserted.append(Payment(
-            id=payment_id,
+        stored_payment_id = f'csv_{batch_id}_{index}_{safe_id}'
+        imported_rows.append(ImportedDatasetRow(
+            id=f'csvrow_{batch_id}_{index}',
+            batch_id=batch_id,
+            row_number=index,
+            payment_id=row['payment_id'],
+            amount=row['amount'],
+            failure_reason=row['failure_reason'],
+            retry_count=row['retry_count'],
+            is_recoverable=row['is_recoverable'],
+        ))
+        payments.append(Payment(
+            id=stored_payment_id,
             amount=row['amount'],
             status=PaymentStatus.FAILED,
             payment_method=f'csv_demo:{batch_id}',
@@ -86,7 +105,8 @@ def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
             retry_count=row['retry_count'],
         ))
     try:
-        db.add_all(inserted)
+        db.add_all(imported_rows)
+        db.add_all(payments)
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -94,7 +114,7 @@ def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
     return {
         'status': 'IMPORTED',
         'batch_id': batch_id,
-        'records_imported': len(inserted),
+        'records_imported': len(imported_rows),
         'dataset_source': 'uploaded_csv_database',
         'read_only_after_import': True,
     }
