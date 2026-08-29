@@ -6,3 +6,4 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 pytest==8.3.3
 faker==30.3.0
+scikit-learn==1.6.1
