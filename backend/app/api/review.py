@@ -64,6 +64,11 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
         action = action_enum.value
         retry_count = scenario_data['retry_count']
 
+        # These tables have foreign keys but the SQLAlchemy models intentionally
+        # do not define ORM relationships. Therefore SQLAlchemy cannot reliably
+        # infer insert ordering from add_all(). Flush each parent before adding
+        # its dependent row. This prevents policy_decisions from being inserted
+        # before its recovery_cases row on PostgreSQL.
         payment = Payment(
             id=payment_id,
             amount=amount,
@@ -72,6 +77,9 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
             failure_reason=scenario_data['failure_reason'],
             retry_count=retry_count,
         )
+        db.add(payment)
+        db.flush()
+
         case = RecoveryCase(
             id=case_id,
             payment_id=payment_id,
@@ -79,6 +87,9 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
             recommended_action=action_enum,
             ai_confidence=confidence,
         )
+        db.add(case)
+        db.flush()
+
         policy_result = policy_engine.evaluate({
             'case_id': case_id,
             'payment_id': payment_id,
@@ -97,7 +108,7 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
             policy_version=policy_result['policy_version'],
             rules_triggered=policy_result['rules_triggered'],
         )
-        db.add_all([payment, case, policy])
+        db.add(policy)
         db.flush()
 
         decision = decision_enum.value
@@ -126,6 +137,8 @@ def create_demo_review_case(scenario: str | None = Query(None), db: Session = De
             },
         )
         db.add(execution)
+        db.flush()
+
         db.add(AuditLog(
             id=f'audit_{uuid.uuid4().hex}',
             event_id=f'demo_created_{execution_id}',
