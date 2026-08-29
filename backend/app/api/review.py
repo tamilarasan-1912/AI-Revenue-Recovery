@@ -48,10 +48,21 @@ def _active_batch_rows(db):
 
 def _dataset_row_for_case(db: Session, low_confidence: bool = False):
     rows = _active_batch_rows(db)
-    if not rows: raise HTTPException(status_code=409, detail='Upload a CSV dataset in Data & Datasets first. RecoverAI no longer uses pre-installed cases.')
-    records = [{'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable} for r in rows]
-    if ml_model.model is None: ml_model.fit(records)
-    scored = [(r, ml_model.predict({'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count})) for r in rows]
+    if not rows:
+        raise HTTPException(status_code=409, detail='Upload a CSV dataset in Data & Datasets first. RecoverAI no longer uses pre-installed cases.')
+
+    records = [
+        {'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason,
+         'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable}
+        for r in rows
+    ]
+    if ml_model.model is None or ml_model.training_rows != len(records):
+        ml_model.fit(records)
+
+    # One sklearn call for the complete batch. This is substantially faster than
+    # calling predict() once per row and prevents hosted API gateway timeouts.
+    predictions = ml_model.predict_many(records)
+    scored = list(zip(rows, predictions))
     return min(scored, key=lambda item: item[1]['confidence']) if low_confidence else random.choice(scored)
 
 
