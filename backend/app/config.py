@@ -3,7 +3,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = 'postgresql://postgres:postgres@localhost:5432/recoverai'
+    # Production deployments should provide DATABASE_URL. If it is omitted,
+    # use SQLite instead of the old localhost PostgreSQL default, which made
+    # every DB-backed API route fail when Postgres was not configured.
+    DATABASE_URL: str = 'sqlite:///./recoverai.db'
     RAZORPAY_KEY_ID: str = ''
     RAZORPAY_KEY_SECRET: str = ''
     RAZORPAY_WEBHOOK_SECRET: str = ''
