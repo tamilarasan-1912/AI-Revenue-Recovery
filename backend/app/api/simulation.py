@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..simulation.database_evaluation import evaluate_database_payments
-from ..simulation.evaluation import run_dataset_evaluation, run_evaluation
+from ..simulation.evaluation import run_dataset_evaluation, run_evaluation, run_multi_seed_evaluation
 
 router = APIRouter()
 
@@ -12,13 +12,24 @@ def run_simulation(
     size: int = Query(10000, ge=100, le=100000),
     seed: int = Query(42, ge=0, le=2147483647),
 ):
-    """Run the reproducible synthetic cohort evaluation."""
     return run_evaluation(size, seed=seed)
+
+
+@router.post('/run-multi-seed')
+def run_multi_seed(
+    size: int = Query(10000, ge=100, le=50000),
+    seeds: str = Query('42,123,456,789,2026'),
+):
+    """Run multiple independent cohorts and return mean/stddev evidence."""
+    try:
+        parsed = [int(s.strip()) for s in seeds.split(',') if s.strip()]
+        return run_multi_seed_evaluation(size, parsed)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post('/run-dataset')
 def run_uploaded_dataset(payload: dict):
-    """Evaluate caller-supplied payment records without writing them to the DB."""
     rows = payload.get('rows') if isinstance(payload, dict) else None
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail='Upload a non-empty dataset.')
@@ -58,5 +69,4 @@ def evaluate_database(
     limit: int = Query(1000, ge=1, le=10000),
     db: Session = Depends(get_db),
 ):
-    """Analyze failed payments from PostgreSQL in read-only mode."""
     return evaluate_database_payments(db, limit=limit)
