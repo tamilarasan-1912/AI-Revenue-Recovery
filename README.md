@@ -145,7 +145,7 @@ Never commit `.env` or credentials.
 
 ## Buildathon positioning
 
-Razorpay's official Track 03 bar is explicit: do not stop at identifying the problem; show measured money recovered across a batch, compliant escalation, stopping rules and an audit trail. RecoverAI is designed around those four proof points rather than treating the dashboard as the product. citeturn1search0
+Razorpay's official Track 03 bar is explicit: do not stop at identifying the problem; show measured money recovered across a batch, compliant escalation, stopping rules and an audit trail. RecoverAI is designed around those four proof points rather than treating the dashboard as the product.
 
 ## Project status
 
