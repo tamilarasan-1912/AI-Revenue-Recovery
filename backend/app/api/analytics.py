@@ -20,7 +20,12 @@ def get_metrics(db: Session = Depends(get_db)):
     dataset_filter = ImportedDatasetRow.batch_id == batch_id
     dataset_risk = db.query(func.sum(ImportedDatasetRow.amount)).filter(dataset_filter).scalar() or 0.0
     recoverable = db.query(func.sum(ImportedDatasetRow.amount)).filter(dataset_filter, ImportedDatasetRow.is_recoverable.is_(True)).scalar() or 0.0
-    recovered = db.query(func.sum(RecoveryCase.revenue_at_risk)).join(PolicyDecisionRecord, RecoveryCase.id == PolicyDecisionRecord.recovery_case_id).join(ExecutionRecord, PolicyDecisionRecord.id == ExecutionRecord.policy_decision_id).filter(ExecutionRecord.status == 'RECOVERED', ExecutionRecord.result_details['source_batch'].as_string() == batch_id).scalar() or 0.0
+    recovered = 0.0
+    executions = db.query(ExecutionRecord).filter(ExecutionRecord.status == 'RECOVERED').all()
+    for execution in executions:
+        if (execution.result_details or {}).get('source_batch') == batch_id:
+            case = db.query(RecoveryCase).filter(RecoveryCase.id == (db.query(PolicyDecisionRecord.recovery_case_id).filter(PolicyDecisionRecord.id == execution.policy_decision_id).scalar() or '')).first()
+            if case: recovered += float(case.revenue_at_risk or 0)
     blocked = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.decision.in_([PolicyDecisionEnum.BLOCK, PolicyDecisionEnum.STOP])).count()
     human = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.decision == PolicyDecisionEnum.HUMAN_REVIEW).count()
     return {'dataset_loaded': True, 'dataset_batch_id': batch_id, 'dataset_records': db.query(ImportedDatasetRow.id).filter(dataset_filter).count(), 'revenue_at_risk': round(dataset_risk, 2), 'recoverable_revenue': round(recoverable, 2), 'revenue_recovered': round(recovered, 2), 'recovery_rate': round((recovered / dataset_risk * 100) if dataset_risk else 0, 2), 'unsafe_actions_blocked': blocked, 'human_escalations': human}
