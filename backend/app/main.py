@@ -8,12 +8,11 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title='RecoverAI API', version='1.3.0')
 
-# Demo API has no browser credentials and never authorizes live money movement.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=settings.cors_origin_list(),
     allow_credentials=False,
-    allow_methods=['*'],
+    allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
 )
 
