@@ -10,3 +10,12 @@ body { margin: 0; min-width: 320px; background: #f7f9fb; color: #17191d; }
 button, input { font: inherit; }
 button { cursor: pointer; }
 ::selection { background: #cddcff; color: #111827; }
+
+/* Keep dashboard cards inside their grid tracks at every viewport width. */
+section { min-width: 0; }
+section > * { min-width: 0; }
+section p.text-3xl { font-size: clamp(1.35rem, 2.15vw, 2.25rem); line-height: 1.08; letter-spacing: -0.025em; overflow-wrap: anywhere; word-break: break-word; }
+section p.text-2xl { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Simulation benchmark metric cards: never let large INR values escape the card. */
+section p.text-3xl.font-extrabold { max-width: 100%; white-space: normal; }
