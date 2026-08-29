@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
@@ -20,8 +21,6 @@ _engine_kwargs = {'pool_pre_ping': True}
 if _is_sqlite:
     _engine_kwargs['connect_args'] = {'check_same_thread': False}
 else:
-    # Fail fast when a hosted database is down instead of holding the API
-    # startup/request for the driver's long default connection timeout.
     _engine_kwargs['connect_args'] = {'connect_timeout': 5}
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
@@ -31,11 +30,20 @@ _fallback_engine = None
 _FallbackSessionLocal = None
 
 
+def _fallback_url() -> str:
+    # Vercel/serverless filesystems are not persistent in the project folder;
+    # /tmp is the writable location available to the function. Local/Docker
+    # development keeps the fallback beside the backend process.
+    if os.getenv('VERCEL'):
+        return 'sqlite:////tmp/recoverai_fallback.db'
+    return 'sqlite:///./recoverai_fallback.db'
+
+
 def _get_fallback_sessionmaker():
     global _fallback_engine, _FallbackSessionLocal
     if _FallbackSessionLocal is None:
         _fallback_engine = create_engine(
-            'sqlite:///./recoverai_fallback.db',
+            _fallback_url(),
             connect_args={'check_same_thread': False},
             pool_pre_ping=True,
         )
