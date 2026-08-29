@@ -49,7 +49,14 @@ def _latest_batch_rows(db):
     if not latest:
         return []
     rows = db.query(ImportedDatasetRow).filter(ImportedDatasetRow.batch_id == latest[0]).order_by(ImportedDatasetRow.row_number.asc()).limit(100000).all()
-    return [{'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable} for r in rows]
+    payloads = []
+    for r in rows:
+        item = {'payment_id': r.payment_id, 'amount': r.amount, 'failure_reason': r.failure_reason, 'retry_count': r.retry_count, 'is_recoverable': r.is_recoverable}
+        features = getattr(r, 'features', None)
+        if isinstance(features, dict):
+            item.update(features)
+        payloads.append(item)
+    return payloads
 
 
 @router.get('/model-status')
@@ -93,11 +100,7 @@ def predict_batch(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=str(exc))
     recommendations = []
     for row, prediction in zip(batch, predictions):
-        recommendations.append({
-            'payment_id': row.get('payment_id'),
-            'prediction': prediction,
-            'recovery_plan': build_recovery_plan({**row, 'ml_recoverability': prediction['recoverability_probability']}),
-        })
+        recommendations.append({'payment_id': row.get('payment_id'), 'prediction': prediction, 'recovery_plan': build_recovery_plan({**row, 'ml_recoverability': prediction['recoverability_probability']})})
     return {'records': recommendations, 'ml_model': ml_model.status()}
 
 
@@ -139,9 +142,10 @@ def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
     batch_id = uuid.uuid4().hex[:10]
     imported_rows, payments = [], []
     for index, row in enumerate(normalized, start=1):
-        imported_rows.append(ImportedDatasetRow(id=f'csvrow_{batch_id}_{index}', batch_id=batch_id, row_number=index, payment_id=row['payment_id'], amount=row['amount'], failure_reason=row['failure_reason'], retry_count=row['retry_count'], is_recoverable=row['is_recoverable']))
+        features = {k: v for k, v in row.items() if k not in {'payment_id', 'amount', 'failure_reason', 'retry_count', 'is_recoverable'}}
+        imported_rows.append(ImportedDatasetRow(id=f'csvrow_{batch_id}_{index}', batch_id=batch_id, row_number=index, payment_id=row['payment_id'], amount=row['amount'], failure_reason=row['failure_reason'], retry_count=row['retry_count'], is_recoverable=row['is_recoverable'], features=features or None))
         safe_id = re.sub(r'[^A-Za-z0-9_.-]+', '_', row['payment_id'])[:80] or f'row_{index}'
-        payments.append(Payment(id=f'csv_{batch_id}_{index}_{safe_id}', amount=row['amount'], status=PaymentStatus.FAILED, payment_method=f'csv_demo:{batch_id}', failure_reason=row['failure_reason'], retry_count=row['retry_count']))
+        payments.append(Payment(id=f'csv_{batch_id}_{index}_{safe_id}', amount=row['amount'], status=PaymentStatus.FAILED, payment_method=str(row.get('payment_method') or f'csv_demo:{batch_id}'), failure_reason=row['failure_reason'], retry_count=row['retry_count']))
     try:
         db.add_all(imported_rows); db.add_all(payments); db.commit()
     except Exception as exc:
