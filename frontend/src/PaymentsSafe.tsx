@@ -26,9 +26,9 @@ type PaymentsResponse = {
 const money = (v: unknown) => `₹${Number(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
 function normalize(payload: unknown): Required<PaymentsResponse> {
-  const p = (payload && typeof payload === 'object' ? payload : {}) as PaymentsResponse;
-  const rows = Array.isArray(p.payments) ? p.payments : [];
-  const summary = p.summary && typeof p.summary === 'object' ? p.summary : {};
+  const p = (payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}) as PaymentsResponse;
+  const rows = Array.isArray(p.payments) ? p.payments.filter(x => x && typeof x === 'object') : [];
+  const summary = p.summary && typeof p.summary === 'object' && !Array.isArray(p.summary) ? p.summary : {};
   return {
     payments: rows,
     summary: {
