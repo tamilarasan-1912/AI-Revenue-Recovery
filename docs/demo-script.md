@@ -2,7 +2,7 @@
 
 ## 0:00–0:30 — Open the control room
 
-Run `docker compose up --build`, open `http://localhost:3000`, and state clearly: **simulation mode is the default and moves no real money**.
+Open the deployed RecoverAI control center and state clearly: **simulation mode is the default and moves no real money**.
 
 Point to the five headline metrics: revenue at risk, recovered revenue, recovery rate, unsafe actions blocked and human escalations.
 
@@ -10,63 +10,72 @@ Point to the five headline metrics: revenue at risk, recovered revenue, recovery
 
 Show:
 
-`Razorpay webhook → Risk Agent → Strategy Agent → Policy Engine → Executor → Audit Log`
+`Razorpay webhook → Risk Agent → Diagnosis/Strategy → Policy Engine → Executor → Audit Log`
 
 Say: **"The LLM proposes. The deterministic policy authorizes. The executor never accepts an AI decision directly."**
 
-## 1:15–2:05 — Show three failure cases
+Open **Policies** briefly and show the actual policy version, retry budget and confidence threshold.
 
-Use these scenarios:
+## 1:15–2:10 — Show policy decisions, not just a happy path
 
-1. `bank_timeout`, retry count 0 → bounded `RETRY`.
-2. `fraud_suspected` → deterministic `STOP`.
-3. retry count 3 → deterministic `STOP`.
-4. Optional: low-confidence recommendation → `HUMAN_REVIEW`.
+Open **Recovery Control** and create demo scenarios until you see:
 
-The important point is not that the AI always succeeds; it is that unsafe recommendations are constrained by policy.
+1. `BANK_TIMEOUT_ALLOW` → `ALLOW` → bounded `RETRY` → execute.
+2. `FRAUD_STOP` → `STOP` → no execute button.
+3. `RETRY_EXHAUSTION_STOP` → `STOP` → no execute button.
+4. `LOW_CONFIDENCE_HUMAN_REVIEW` → `HUMAN_REVIEW` → open Human Review.
 
-## 2:05–2:45 — Demonstrate Razorpay webhook safety
+The important point is that the UI reads confidence and policy output from the backend. It does not display invented confidence percentages or a hardcoded `ALLOW` state.
 
-The webhook handler validates the raw body against `X-Razorpay-Signature` when a webhook secret is configured and uses `X-Razorpay-Event-Id` for duplicate-event detection.
+## 2:10–2:50 — Human review
 
-Razorpay documents that duplicate webhook delivery can occur and that `payment.failed` can be followed by a later `payment.captured` event. RecoverAI handles both cases.
+Open **Human Review** and approve or reject a low-confidence case.
 
-## 2:45–3:20 — Demonstrate idempotency
+Show that approval executes through the same bounded executor and that rejection produces `REJECTED_BY_HUMAN` in the audit trail.
 
-Send the same event twice. The second delivery should return `duplicate_event`.
+## 2:50–3:20 — Webhook and idempotency safety
 
-Then explain that a recovery case/action maps to a deterministic idempotency key, so a retry of the same logical execution cannot silently create a second action.
+Explain that the webhook handler validates `X-Razorpay-Signature` when a webhook secret is configured and uses the Razorpay event identifier for duplicate-event detection.
 
-## 3:20–4:15 — Run the evidence experiment
+Then open **Resilience Lab** and run the synthetic checks. Show:
 
-Open **Simulation Lab** and run **10,000 events**.
+- retry exhaustion → `STOP`
+- duplicate execution → `PROTECTED`
 
-Use the generated values for:
+This is a deliberate reliability proof, not a UI animation.
 
-- revenue at risk
-- blind-retry recovered revenue
-- RecoverAI recovered revenue
-- incremental revenue
-- improvement percentage
+## 3:20–4:10 — Run the evidence experiment
+
+Open **Simulation Lab**.
+
+First run one seed if you want to demonstrate reproducibility. Then click **Run final evidence**.
+
+The UI runs **5 seeds × 10,000 synthetic transactions** and displays:
+
+- baseline recovery rate
+- RecoverAI recovery rate
+- mean incremental revenue
+- standard deviation
+- mean improvement
 - human-review rate
-- unsafe actions blocked
+- unsafe block rate
 
-**Do not memorize or invent these numbers. Run the benchmark immediately before recording the pitch.**
+**Do not memorize or invent the numbers. Run the benchmark immediately before recording the pitch.**
 
-Important wording: the benchmark's "recovered revenue" is a **synthetic evaluation outcome**, not live money collected from Razorpay.
+Important wording: the benchmark's recovered revenue is a **synthetic evaluation outcome**, not live money collected from Razorpay.
 
-## 4:15–4:45 — Show auditability
+## 4:10–4:40 — Show payment state and auditability
 
-Open **Audit Log** and show the chain from event to outcome.
+Open **Payments** and show the payment records created by the demo scenarios.
 
-Point out that every recovery decision can be explained through the event, risk/strategy output, policy decision, action and final outcome.
+Open **Audit Log** and export the visible events. Point out the chain from event → policy → review/execution → outcome.
 
-## 4:45–5:00 — Close
+## 4:40–5:00 — Close
 
 Say:
 
-> "RecoverAI does not give an LLM a payment button. It turns failed payments into bounded, measurable recovery decisions, with deterministic stopping rules, compliant escalation and an auditable outcome."
+> "RecoverAI does not give an LLM a payment button. It turns failed payments into bounded, measurable recovery decisions, with deterministic stopping rules, compliant escalation, idempotent execution and an auditable outcome."
 
-### Optional Test Mode proof
+### Optional Razorpay Test Mode proof
 
-If Test Mode credentials are configured and `ENABLE_RAZORPAY_TEST_ACTIONS=true`, demonstrate a `PAYMENT_LINK` action and show the generated Test Mode link. Keep live credentials disabled.
+If `ENABLE_RAZORPAY_TEST_ACTIONS=true` and valid Test Mode credentials are configured, demonstrate the Test Mode adapter. Keep live credentials disabled. Never claim that a synthetic benchmark is live recovered revenue.
