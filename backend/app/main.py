@@ -1,18 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
-from .database import engine, Base
+from .database import engine, Base, _get_fallback_sessionmaker
 from .api import webhooks, analytics, audit, simulation, review, failure_injection, system, payments
 
-Base.metadata.create_all(bind=engine)
+# Never prevent the API from starting just because the configured external DB
+# is temporarily unavailable. The database layer has a SQLite fallback for
+# demo/preview operation; a healthy configured Postgres remains preferred.
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception:
+    _get_fallback_sessionmaker()
 
 app = FastAPI(title='RecoverAI API', version='1.3.0')
 
-# Vercel creates a new preview hostname for many deployments. The previous
-# configuration depended on a small hard-coded list, so a new preview could
-# reach the healthy Render API but still be rejected by the browser's CORS
-# policy. Keep the configured origins and additionally allow this project's
-# Vercel preview/deployment hostnames.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),
