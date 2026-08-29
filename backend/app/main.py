@@ -2,17 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import engine, Base, _get_fallback_sessionmaker
-from .api import webhooks, analytics, audit, simulation, review, failure_injection, system, payments
+from .api import webhooks, analytics, audit, simulation, review, failure_injection, system, payments, recovery
 
-# Never prevent the API from starting just because the configured external DB
-# is temporarily unavailable. The database layer has a SQLite fallback for
-# demo/preview operation; a healthy configured Postgres remains preferred.
 try:
     Base.metadata.create_all(bind=engine)
 except Exception:
     _get_fallback_sessionmaker()
 
-app = FastAPI(title='RecoverAI API', version='1.3.0')
+app = FastAPI(title='RecoverAI API', version='1.4.0')
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +25,7 @@ app.include_router(analytics.router, prefix='/api/analytics')
 app.include_router(audit.router, prefix='/api/audit')
 app.include_router(simulation.router, prefix='/api/simulation')
 app.include_router(review.router, prefix='/api/review')
+app.include_router(recovery.router, prefix='/api/recovery')
 app.include_router(failure_injection.router, prefix='/api/failure-injection')
 app.include_router(system.router, prefix='/api/system')
 app.include_router(payments.router, prefix='/api/payments')
@@ -39,5 +37,5 @@ def read_root():
         'message': 'RecoverAI API is running',
         'status': 'healthy',
         'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
-        'version': '1.3.0',
+        'version': '1.4.0',
     }
