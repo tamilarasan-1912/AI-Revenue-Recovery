@@ -1,8 +1,8 @@
 """Dataset-trained ML model used by RecoverAI.
 
-The uploaded CSV is the only training source.  The model predicts the
-recoverability label from transaction amount, failure reason and retry count.
-The label is never supplied to the model as an input feature.
+The uploaded CSV is the only training source. The model predicts recoverability
+from transaction amount, failure reason and retry count. The label is never
+supplied to the model as an input feature.
 """
 from typing import Any
 
@@ -39,7 +39,6 @@ class RecoveryMLModel:
         y = ["recoverable" if bool(r.get("is_recoverable")) else "not_recoverable" for r in clean]
         unique = sorted(set(y))
 
-        # A one-class upload is still handled by a real sklearn estimator.
         estimator = DummyClassifier(strategy="prior", random_state=42) if len(unique) < 2 else RandomForestClassifier(
             n_estimators=150,
             max_depth=10,
@@ -57,23 +56,41 @@ class RecoveryMLModel:
         self.classes = list(getattr(estimator, "classes_", unique))
         return self.status()
 
-    def predict(self, row: dict[str, Any]) -> dict[str, Any]:
+    def predict_many(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Predict a batch in one sklearn call.
+
+        Calling RandomForest.predict_proba once per CSV row is unnecessarily
+        expensive on hosted/serverless deployments. Batch inference keeps the
+        same model and output semantics while avoiding request timeouts.
+        """
         if self.model is None:
             raise RuntimeError("No uploaded dataset has trained the ML model yet.")
-        x = [self._features(row)]
-        probabilities = self.model.predict_proba(x)[0]
-        classes = list(self.model.named_steps["model"].classes_)
-        probability_map = {str(label): float(prob) for label, prob in zip(classes, probabilities)}
-        recoverable_probability = probability_map.get("recoverable", 0.0)
-        predicted = "recoverable" if recoverable_probability >= 0.5 else "not_recoverable"
-        confidence = max(probability_map.values()) if probability_map else 0.5
-        return {
-            "predicted_label": predicted,
-            "recoverability_probability": round(recoverable_probability, 4),
-            "confidence": round(float(confidence), 4),
-            "model_version": self.version,
-            "training_rows": self.training_rows,
-        }
+        if not rows:
+            return []
+
+        x = [self._features(row) for row in rows]
+        probabilities = self.model.predict_proba(x)
+        classes = [str(label) for label in self.model.named_steps["model"].classes_]
+        results: list[dict[str, Any]] = []
+
+        for probability_row in probabilities:
+            probability_map = {
+                label: float(prob) for label, prob in zip(classes, probability_row)
+            }
+            recoverable_probability = probability_map.get("recoverable", 0.0)
+            predicted = "recoverable" if recoverable_probability >= 0.5 else "not_recoverable"
+            confidence = max(probability_map.values()) if probability_map else 0.5
+            results.append({
+                "predicted_label": predicted,
+                "recoverability_probability": round(recoverable_probability, 4),
+                "confidence": round(float(confidence), 4),
+                "model_version": self.version,
+                "training_rows": self.training_rows,
+            })
+        return results
+
+    def predict(self, row: dict[str, Any]) -> dict[str, Any]:
+        return self.predict_many([row])[0]
 
     def status(self) -> dict[str, Any]:
         return {
