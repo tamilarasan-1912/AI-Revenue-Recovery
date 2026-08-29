@@ -1,16 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .api import webhooks, analytics, audit, simulation, review
-from .config import settings
+from .api import webhooks, analytics, audit, simulation, review, failure_injection
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title='RecoverAI API', version='1.2.4')
+app = FastAPI(title='RecoverAI API', version='1.2.5')
 
-# The deployed frontend uses changing Vercel preview URLs. This API is
-# simulation-only and does not use browser credentials, so a public CORS
-# policy is appropriate for the demo API.
+# Demo API has no browser credentials and never authorizes live money movement.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
@@ -24,6 +21,8 @@ app.include_router(analytics.router, prefix='/api/analytics')
 app.include_router(audit.router, prefix='/api/audit')
 app.include_router(simulation.router, prefix='/api/simulation')
 app.include_router(review.router, prefix='/api/review')
+app.include_router(failure_injection.router, prefix='/api/failure-injection')
+
 
 @app.get('/')
 def read_root():
@@ -31,5 +30,5 @@ def read_root():
         'message': 'RecoverAI API is running',
         'status': 'healthy',
         'execution_mode': 'simulation',
-        'version': '1.2.4'
+        'version': '1.2.5',
     }
