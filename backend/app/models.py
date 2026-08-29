@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, ForeignKey, Enum, Boolean
 from sqlalchemy.sql import func
 import enum
 from .database import Base
@@ -69,4 +69,16 @@ class SimulationRun(Base):
     baseline_recovered = Column(Float, nullable=False)
     recoverai_recovered = Column(Float, nullable=False)
     unsafe_actions_blocked = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ImportedDatasetRow(Base):
+    __tablename__ = 'imported_dataset_rows'
+    id = Column(String, primary_key=True, index=True)
+    batch_id = Column(String, index=True, nullable=False)
+    row_number = Column(Integer, nullable=False)
+    payment_id = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    failure_reason = Column(String, nullable=False)
+    retry_count = Column(Integer, nullable=False, default=0)
+    is_recoverable = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
