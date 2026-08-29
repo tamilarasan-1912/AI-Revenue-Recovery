@@ -2,13 +2,19 @@ import re
 import uuid
 from fastapi import APIRouter, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
-from ..database import get_db
 from ..models import ImportedDatasetRow, Payment, PaymentStatus
+from ..database import get_db
 from ..ml_model import ml_model
 from ..simulation.database_evaluation import evaluate_database_payments
 from ..simulation.evaluation import run_dataset_evaluation
 
 router = APIRouter()
+
+# Hosted API requests should stay bounded. The CSV itself may contain up to
+# 100,000 rows, but the interactive synchronous simulation endpoint evaluates
+# a bounded cohort. The full dataset remains stored and can be evaluated in
+# subsequent batches without causing a gateway timeout.
+RUNTIME_EVALUATION_LIMIT = 1000
 
 
 def _normalize_rows(payload: dict):
@@ -57,10 +63,10 @@ def model_status(db: Session = Depends(get_db)):
 
 @router.post('/run')
 def run_simulation(db: Session = Depends(get_db)):
-    result = evaluate_database_payments(db, limit=100000)
+    result = evaluate_database_payments(db, limit=RUNTIME_EVALUATION_LIMIT)
     if result['records_evaluated'] == 0:
         raise HTTPException(status_code=409, detail='Upload a CSV dataset first. RecoverAI no longer uses pre-installed simulation data.')
-    return {**result, 'dataset_source': 'uploaded_csv_database', 'ml_model': ml_model.status()}
+    return {**result, 'dataset_source': 'uploaded_csv_database', 'evaluation_limit': RUNTIME_EVALUATION_LIMIT, 'ml_model': ml_model.status()}
 
 
 @router.post('/run-multi-seed')
@@ -69,24 +75,29 @@ def run_multi_seed(seeds: str = Query('42,123,456,789,2026'), db: Session = Depe
         parsed = [int(s.strip()) for s in seeds.split(',') if s.strip()]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    result = evaluate_database_payments(db, limit=100000)
+    result = evaluate_database_payments(db, limit=RUNTIME_EVALUATION_LIMIT)
     if result['records_evaluated'] == 0:
         raise HTTPException(status_code=409, detail='Upload a CSV dataset first.')
-    return {**result, 'seeds': parsed, 'dataset_source': 'uploaded_csv_database', 'ml_model': ml_model.status()}
+    return {**result, 'seeds': parsed, 'evaluation_limit': RUNTIME_EVALUATION_LIMIT, 'dataset_source': 'uploaded_csv_database', 'ml_model': ml_model.status()}
 
 
 @router.post('/run-dataset')
 def run_uploaded_dataset(payload: dict):
     normalized = _normalize_rows(payload)
     ml_status = ml_model.fit(normalized)
-    result = run_dataset_evaluation(normalized)
-    result['dataset_source'] = 'uploaded_csv'; result['records_preview'] = normalized[:100]; result['ml_model'] = ml_status
+    result = run_dataset_evaluation(normalized[:RUNTIME_EVALUATION_LIMIT])
+    result['dataset_source'] = 'uploaded_csv'
+    result['evaluation_limit'] = min(len(normalized), RUNTIME_EVALUATION_LIMIT)
+    result['records_preview'] = normalized[:100]
+    result['ml_model'] = ml_status
     return result
 
 
 @router.post('/import-dataset')
 def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
-    normalized = _normalize_rows(payload); batch_id = uuid.uuid4().hex[:10]; imported_rows, payments = [], []
+    normalized = _normalize_rows(payload)
+    batch_id = uuid.uuid4().hex[:10]
+    imported_rows, payments = [], []
     for index, row in enumerate(normalized, start=1):
         imported_rows.append(ImportedDatasetRow(id=f'csvrow_{batch_id}_{index}', batch_id=batch_id, row_number=index, payment_id=row['payment_id'], amount=row['amount'], failure_reason=row['failure_reason'], retry_count=row['retry_count'], is_recoverable=row['is_recoverable']))
         safe_id = re.sub(r'[^A-Za-z0-9_.-]+', '_', row['payment_id'])[:80] or f'row_{index}'
@@ -95,12 +106,23 @@ def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
         db.add_all(imported_rows); db.add_all(payments); db.commit()
     except Exception as exc:
         db.rollback(); raise HTTPException(status_code=409, detail=f'Could not import dataset: {exc.__class__.__name__}')
-    ml_status = ml_model.fit(normalized); evaluation = evaluate_database_payments(db, limit=len(normalized), batch_id=batch_id)
-    return {'status': 'IMPORTED', 'batch_id': batch_id, 'records_imported': len(normalized), 'dataset_source': 'uploaded_csv_database', 'read_only_after_import': True, 'ml_model': ml_status, 'evaluation': evaluation}
+    ml_status = ml_model.fit(normalized)
+    evaluation = evaluate_database_payments(db, limit=min(len(normalized), RUNTIME_EVALUATION_LIMIT), batch_id=batch_id)
+    return {
+        'status': 'IMPORTED',
+        'batch_id': batch_id,
+        'records_imported': len(normalized),
+        'dataset_source': 'uploaded_csv_database',
+        'read_only_after_import': True,
+        'evaluation_limit': min(len(normalized), RUNTIME_EVALUATION_LIMIT),
+        'evaluation_is_bounded': len(normalized) > RUNTIME_EVALUATION_LIMIT,
+        'ml_model': ml_status,
+        'evaluation': evaluation,
+    }
 
 
 @router.get('/evaluate-database')
-def evaluate_database(limit: int = Query(1000, ge=1, le=100000), batch_id: str | None = Query(None), db: Session = Depends(get_db)):
+def evaluate_database(limit: int = Query(RUNTIME_EVALUATION_LIMIT, ge=1, le=RUNTIME_EVALUATION_LIMIT), batch_id: str | None = Query(None), db: Session = Depends(get_db)):
     result = evaluate_database_payments(db, limit=limit, batch_id=batch_id)
     if result['records_evaluated'] == 0:
         raise HTTPException(status_code=409, detail='No uploaded CSV data is available. Upload a dataset first.')
