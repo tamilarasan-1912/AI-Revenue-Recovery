@@ -19,7 +19,7 @@ def _simulated_action_succeeds(payment: dict, action: str) -> bool:
 
 def run_recoverai(dataset):
     total = len(dataset)
-    use_ml = ml_model.model is not None
+    use_ml = ml_model.classifier is not None
     revenue_at_risk = sum(float(p.get('amount', 0) or 0) for p in dataset)
     recoverable_revenue = sum(float(p.get('amount', 0) or 0) for p in dataset if p.get('is_recoverable'))
     recovered = 0; revenue = 0.0; unsafe_blocked = 0; human_reviews = 0; stopped = 0; fraud_stops = 0; retry_exhaustions = 0; executed_interventions = 0
