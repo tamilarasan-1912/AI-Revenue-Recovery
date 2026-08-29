@@ -1,14 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Production backend used by the deployed RecoverAI frontend.
-// Vercel must rebuild this file; otherwise an older bundle can fall back to localhost.
-const productionApi = 'https://recoverai-api-zwr9.onrender.com/api'
+// Use the Vercel same-origin /api proxy in production so browser requests do not
+// depend on Render CORS configuration. Local development still uses Vite's
+// /api proxy to the backend container.
+const productionApi = '/api'
 
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Keep the production endpoint deterministic even when Vercel has no VITE_API_URL variable.
+    // Keep the frontend API path same-origin in deployed builds.
     'import.meta.env.VITE_API_URL': JSON.stringify(productionApi),
   },
   server: {
