@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         production_frontends = {
             'https://ai-revenue-recovery-nine.vercel.app',
             'https://frontend-bpkjb2id9-tamilarasan1.vercel.app',
+            'https://frontend-bhoafqsmd-tamilarasan1.vercel.app',
         }
         origins.extend(origin for origin in production_frontends if origin not in origins)
         return origins
