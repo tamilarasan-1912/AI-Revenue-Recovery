@@ -6,13 +6,9 @@ from .generate_dataset import generate_dataset
 BENCHMARK_VERSION = 'channel-aware-v2'
 
 
-def run_evaluation(dataset_size: int = 10000, seed: int = 42):
-    """Run a reproducible, channel-aware Track 03 evaluation.
-
-    Ground truth stays hidden from the agents and is used only for scoring
-    the outcome of the authorized intervention against the baseline.
-    """
-    dataset = generate_dataset(dataset_size, seed=seed)
+def _score_dataset(dataset, *, seed=None, source='synthetic'):
+    """Score a supplied cohort using the same baseline and RecoverAI engines."""
+    dataset_size = len(dataset)
     base = run_baseline(dataset)
     rec = run_recoverai(dataset)
     baseline_revenue = base['revenue_recovered']
@@ -20,6 +16,7 @@ def run_evaluation(dataset_size: int = 10000, seed: int = 42):
     improvement = (incremental / baseline_revenue * 100) if baseline_revenue > 0 else 0.0
     return {
         'benchmark_version': BENCHMARK_VERSION,
+        'dataset_source': source,
         'dataset_size': dataset_size,
         'seed': seed,
         'baseline': base,
@@ -34,3 +31,14 @@ def run_evaluation(dataset_size: int = 10000, seed: int = 42):
         'fraud_stop_rate': round((rec['fraud_stops'] / dataset_size * 100) if dataset_size else 0, 2),
         'intervention_execution_rate': round((rec['executed_interventions'] / dataset_size * 100) if dataset_size else 0, 2),
     }
+
+
+def run_evaluation(dataset_size: int = 10000, seed: int = 42):
+    """Run the reproducible synthetic benchmark."""
+    dataset = generate_dataset(dataset_size, seed=seed)
+    return _score_dataset(dataset, seed=seed, source='synthetic')
+
+
+def run_dataset_evaluation(dataset):
+    """Run the same evaluation pipeline on caller-supplied records."""
+    return _score_dataset(dataset, seed=None, source='uploaded_csv')
