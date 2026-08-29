@@ -14,6 +14,16 @@ from ..ml_model import ml_model
 
 router = APIRouter(); logger = logging.getLogger(__name__)
 
+# Kept as a compatibility fixture for the existing policy-engine test suite.
+# These values are not used by the live application; live cases come only from CSV.
+DEMO_SCENARIOS = [
+    {'amount': 7499.0, 'confidence': 0.94, 'failure_reason': 'Synthetic demo: bank timeout; immediate retry is appropriate', 'action': ActionType.RETRY, 'retry_count': 0, 'expected_recovery_value': 5999.20, 'fraud_signal': False, 'label': 'BANK_TIMEOUT_ALLOW'},
+    {'amount': 2899.0, 'confidence': 0.90, 'failure_reason': 'Synthetic demo: insufficient funds; payment link is preferred', 'action': ActionType.PAYMENT_LINK, 'retry_count': 0, 'expected_recovery_value': 2319.20, 'fraud_signal': False, 'label': 'INSUFFICIENT_FUNDS_PAYMENT_LINK'},
+    {'amount': 19999.0, 'confidence': 0.97, 'failure_reason': 'Synthetic demo: fraud signal detected; recovery must stop', 'action': ActionType.STOP, 'retry_count': 0, 'expected_recovery_value': 0.0, 'fraud_signal': True, 'label': 'FRAUD_STOP'},
+    {'amount': 1499.0, 'confidence': 0.95, 'failure_reason': 'Synthetic demo: retry budget exhausted', 'action': ActionType.RETRY, 'retry_count': 3, 'expected_recovery_value': 1199.20, 'fraud_signal': False, 'label': 'RETRY_EXHAUSTION_STOP'},
+    {'amount': 12500.0, 'confidence': 0.42, 'failure_reason': 'Synthetic demo: insufficient evidence for automatic recovery', 'action': ActionType.RETRY, 'retry_count': 0, 'expected_recovery_value': 10000.0, 'fraud_signal': False, 'label': 'LOW_CONFIDENCE_HUMAN_REVIEW'},
+]
+
 
 def _load_execution_case(db: Session, execution_id: str):
     row = db.query(ExecutionRecord).filter(ExecutionRecord.id == execution_id).first()
