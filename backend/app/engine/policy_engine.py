@@ -12,6 +12,7 @@ class PolicyEngine:
         retry_count = int(case.get('retry_count', 0) or 0)
         expected_value = float(case.get('expected_recovery_value', 0.0) or 0.0)
         fraud = bool(case.get('fraud_signal', False))
+        recovery_plan = case.get('recovery_plan') or {}
         decision = PolicyDecisionEnum.ALLOW
 
         if action not in settings.ALLOWED_ACTIONS:
@@ -20,6 +21,12 @@ class PolicyEngine:
         elif fraud:
             decision = PolicyDecisionEnum.STOP
             rules.append('FRAUD_SIGNAL')
+        elif recovery_plan and action == ActionType.RETRY.value and not recovery_plan.get('retryable', True):
+            decision = PolicyDecisionEnum.BLOCK
+            rules.append('RECOVERY_PLAN_DISALLOWS_RETRY')
+        elif recovery_plan and action == ActionType.RETRY.value and recovery_plan.get('next_retry_in_hours') is None:
+            decision = PolicyDecisionEnum.STOP
+            rules.append('NO_RETRY_WINDOW_AVAILABLE')
         elif action == ActionType.HUMAN_ESCALATION.value:
             decision = PolicyDecisionEnum.HUMAN_REVIEW
             rules.append('EXPLICIT_HUMAN_ESCALATION')
@@ -41,7 +48,7 @@ class PolicyEngine:
 
         return {
             'decision': decision.value,
-            'policy_version': 'v1.3',
+            'policy_version': 'v1.4-recovery-playbook',
             'rules_triggered': rules,
         }
 
