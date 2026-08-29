@@ -81,4 +81,7 @@ class ImportedDatasetRow(Base):
     failure_reason = Column(String, nullable=False)
     retry_count = Column(Integer, nullable=False, default=0)
     is_recoverable = Column(Boolean, nullable=False, default=False)
+    # Optional ML behaviour features are stored as JSON so the database schema
+    # remains backward-compatible while supporting richer training data.
+    features = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
