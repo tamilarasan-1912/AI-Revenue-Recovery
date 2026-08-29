@@ -1,4 +1,4 @@
-name: 10K benchmark
+name: Final multi-seed benchmark
 
 on:
   workflow_dispatch:
@@ -20,18 +20,20 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - name: Run reproducible 10K benchmark
+      - name: Run final 5-seed 10K benchmark
         run: PYTHONPATH=. python scripts/run_benchmark.py
         env:
           BENCHMARK_SIZE: 10000
-          BENCHMARK_SEED: 42
+          BENCHMARK_SEEDS: 42,123,456,789,2026
           BENCHMARK_OUTPUT: benchmark-result.json
       - name: Verify benchmark artifact exists
         run: test -s benchmark-result.json
+      - name: Verify benchmark contains all five seeds
+        run: python -c "import json; r=json.load(open('benchmark-result.json')); assert r['seeds']==[42,123,456,789,2026]; assert len(r['runs'])==5; assert r['aggregate']['total_transactions_evaluated']==50000"
       - name: Upload benchmark result
         uses: actions/upload-artifact@v4
         with:
-          name: recoverai-10k-benchmark
+          name: recoverai-final-multi-seed-benchmark
           path: backend/benchmark-result.json
           if-no-files-found: error
           retention-days: 30
