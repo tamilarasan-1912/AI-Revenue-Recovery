@@ -46,11 +46,13 @@ def create_demo_review_case(db: Session = Depends(get_db)):
         rules_triggered=['LOW_CONFIDENCE'],
     )
 
-    # Flush the parent records first so PostgreSQL has the policy decision
-    # available before the execution row is inserted. SQLAlchemy's add_all()
-    # does not guarantee this dependency order during a flush.
+    # These foreign keys are scalar columns rather than SQLAlchemy
+    # relationships, so the unit-of-work cannot infer their dependency order.
+    # Flush each parent explicitly before inserting its child.
     db.add(payment)
+    db.flush()
     db.add(case)
+    db.flush()
     db.add(policy)
     db.flush()
 
