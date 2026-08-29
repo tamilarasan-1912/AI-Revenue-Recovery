@@ -4,28 +4,20 @@ from ..engine.policy_engine import policy_engine
 from ..models import Payment, PaymentStatus
 
 
-def evaluate_database_payments(db, limit: int = 1000):
+def evaluate_database_payments(db, limit: int = 1000, batch_id: str | None = None):
     """Read failed payments and evaluate recovery decisions without executing them.
 
-    Database mode is intentionally read-only: no payment, execution, or audit
-    records are mutated by this endpoint. Recovery success is not inferred
-    because the Payment table does not contain hidden ground truth.
+    If batch_id is supplied, only the explicitly imported CSV batch is evaluated.
+    Otherwise the endpoint evaluates the latest failed payments in the database.
+    No payment, execution, or audit record is mutated.
     """
-    payments = (
-        db.query(Payment)
-        .filter(Payment.status == PaymentStatus.FAILED)
-        .order_by(Payment.created_at.desc())
-        .limit(limit)
-        .all()
-    )
+    query = db.query(Payment).filter(Payment.status == PaymentStatus.FAILED)
+    if batch_id:
+        query = query.filter(Payment.payment_method == f'csv_demo:{batch_id}')
+    payments = query.order_by(Payment.created_at.desc()).limit(limit).all()
 
     results = []
-    counts = {
-        'ALLOW': 0,
-        'BLOCK': 0,
-        'STOP': 0,
-        'HUMAN_REVIEW': 0,
-    }
+    counts = {'ALLOW': 0, 'BLOCK': 0, 'STOP': 0, 'HUMAN_REVIEW': 0}
     action_counts = {}
     revenue_at_risk = 0.0
 
@@ -67,11 +59,13 @@ def evaluate_database_payments(db, limit: int = 1000):
             'expected_recovery_value': strategy.get('expected_recovery_value', 0.0),
             'policy_decision': decision,
             'rules_triggered': policy.get('rules_triggered', []),
+            'source_batch': batch_id,
         })
 
     return {
-        'dataset_source': 'database',
+        'dataset_source': 'database_import' if batch_id else 'database',
         'read_only': True,
+        'batch_id': batch_id,
         'records_evaluated': len(results),
         'revenue_at_risk': round(revenue_at_risk, 2),
         'policy_decisions': counts,
