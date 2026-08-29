@@ -8,34 +8,77 @@ from ..engine.executor import executor
 
 router = APIRouter()
 
+
+DEMO_SCENARIOS = [
+    {
+        'amount': 12500.0,
+        'confidence': 0.42,
+        'failure_reason': 'Synthetic demo: insufficient evidence for automatic recovery',
+        'action': ActionType.RETRY,
+        'label': 'LOW_CONFIDENCE_RETRY',
+    },
+    {
+        'amount': 7499.0,
+        'confidence': 0.48,
+        'failure_reason': 'Synthetic demo: bank timeout with limited evidence',
+        'action': ActionType.RETRY,
+        'label': 'BANK_TIMEOUT_RETRY',
+    },
+    {
+        'amount': 2899.0,
+        'confidence': 0.39,
+        'failure_reason': 'Synthetic demo: insufficient funds; payment link suggested',
+        'action': ActionType.PAYMENT_LINK,
+        'label': 'PAYMENT_LINK_REVIEW',
+    },
+    {
+        'amount': 19999.0,
+        'confidence': 0.31,
+        'failure_reason': 'Synthetic demo: elevated fraud signal requires merchant review',
+        'action': ActionType.STOP,
+        'label': 'FRAUD_REVIEW',
+    },
+    {
+        'amount': 499.0,
+        'confidence': 0.44,
+        'failure_reason': 'Synthetic demo: authentication evidence is incomplete',
+        'action': ActionType.RETRY,
+        'label': 'AUTHENTICATION_REVIEW',
+    },
+]
+
+
 @router.post('/demo')
 def create_demo_review_case(db: Session = Depends(get_db)):
-    """Create a synthetic low-confidence case for the live governance demo.
+    """Create a varied synthetic low-confidence case for the live governance demo.
 
-    This never calls a payment provider. It creates the same database records
-    used by the review queue so the reviewer flow can be demonstrated safely.
+    The scenario rotates deterministically from the current UTC second so
+    repeated clicks do not always create the same amount/action. This endpoint
+    never calls a payment provider or moves real money.
     """
     token = uuid.uuid4().hex[:12]
+    scenario = DEMO_SCENARIOS[int(token[-4:], 16) % len(DEMO_SCENARIOS)]
     payment_id = f'demo_payment_{token}'
     case_id = f'demo_case_{token}'
     policy_id = f'demo_policy_{token}'
     execution_id = f'demo_execution_{token}'
-    amount = 12500.0
-    confidence = 0.42
+    amount = scenario['amount']
+    confidence = scenario['confidence']
+    action = scenario['action']
 
     payment = Payment(
         id=payment_id,
         amount=amount,
         status=PaymentStatus.FAILED,
         payment_method='card',
-        failure_reason='Synthetic demo: insufficient evidence for automatic recovery',
+        failure_reason=scenario['failure_reason'],
         retry_count=0,
     )
     case = RecoveryCase(
         id=case_id,
         payment_id=payment_id,
         revenue_at_risk=amount,
-        recommended_action=ActionType.RETRY,
+        recommended_action=action,
         ai_confidence=confidence,
     )
     policy = PolicyDecisionRecord(
@@ -46,9 +89,6 @@ def create_demo_review_case(db: Session = Depends(get_db)):
         rules_triggered=['LOW_CONFIDENCE'],
     )
 
-    # These foreign keys are scalar columns rather than SQLAlchemy
-    # relationships, so the unit-of-work cannot infer their dependency order.
-    # Flush each parent explicitly before inserting its child.
     db.add(payment)
     db.flush()
     db.add(case)
@@ -59,16 +99,21 @@ def create_demo_review_case(db: Session = Depends(get_db)):
     execution = ExecutionRecord(
         id=execution_id,
         policy_decision_id=policy_id,
-        action=ActionType.RETRY,
+        action=action,
         status='PENDING_HUMAN_REVIEW',
         idempotency_key=f'demo_review_{token}',
-        result_details={'demo': True, 'ai_confidence': confidence, 'note': 'Synthetic case; no real-money movement'},
+        result_details={
+            'demo': True,
+            'scenario': scenario['label'],
+            'ai_confidence': confidence,
+            'note': 'Synthetic case; no real-money movement',
+        },
     )
     audit = AuditLog(
         id=f'audit_{uuid.uuid4().hex}',
         event_id=f'demo_created_{execution_id}',
         payment_id=payment_id,
-        action=ActionType.RETRY.value,
+        action=action.value,
         outcome='PENDING_HUMAN_REVIEW',
     )
 
@@ -80,10 +125,15 @@ def create_demo_review_case(db: Session = Depends(get_db)):
         'payment_id': payment_id,
         'case_id': case_id,
         'execution_id': execution_id,
+        'amount': amount,
+        'failure_reason': scenario['failure_reason'],
+        'recommended_action': action.value,
         'ai_confidence': confidence,
+        'scenario': scenario['label'],
         'policy_rules': ['LOW_CONFIDENCE'],
         'demo': True,
     }
+
 
 @router.get('/pending')
 def pending_reviews(db: Session = Depends(get_db)):
@@ -95,6 +145,7 @@ def pending_reviews(db: Session = Depends(get_db)):
         payment = db.query(Payment).filter(Payment.id == (case.payment_id if case else '')).first() if case else None
         result.append({'execution_id': row.id, 'case_id': case.id if case else None, 'payment_id': payment.id if payment else None, 'amount': payment.amount if payment else None, 'failure_reason': payment.failure_reason if payment else None, 'recommended_action': row.action.value if row.action else None, 'policy_decision_id': row.policy_decision_id, 'policy_rules': policy.rules_triggered if policy else [], 'created_at': row.created_at})
     return result
+
 
 @router.post('/{execution_id}/decision')
 def decide_review(execution_id: str, approved: bool, reviewer: str = 'merchant_reviewer', db: Session = Depends(get_db)):
