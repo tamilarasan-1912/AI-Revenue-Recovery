@@ -5,15 +5,11 @@ from sqlalchemy.orm import Session
 from ..models import ImportedDatasetRow, Payment, PaymentStatus
 from ..database import get_db
 from ..ml_model import ml_model
+from ..recovery_playbook import build_recovery_plan
 from ..simulation.database_evaluation import evaluate_database_payments
 from ..simulation.evaluation import run_dataset_evaluation
 
 router = APIRouter()
-
-# Hosted API requests should stay bounded. The CSV itself may contain up to
-# 100,000 rows, but the interactive synchronous simulation endpoint evaluates
-# a bounded cohort. The full dataset remains stored and can be evaluated in
-# subsequent batches without causing a gateway timeout.
 RUNTIME_EVALUATION_LIMIT = 1000
 
 
@@ -40,8 +36,11 @@ def _normalize_rows(payload: dict):
         payment_id = str(row['payment_id']).strip(); failure_reason = str(row['failure_reason']).strip().lower()
         if not payment_id or not failure_reason:
             raise HTTPException(status_code=400, detail=f'Row {index} must have payment_id and failure_reason.')
-        raw_label = row['is_recoverable']; is_recoverable = raw_label if isinstance(raw_label, bool) else str(raw_label).strip().lower() in {'true', '1', 'yes', 'y'}
-        normalized.append({'payment_id': payment_id, 'amount': amount, 'failure_reason': failure_reason, 'retry_count': retry_count, 'is_recoverable': is_recoverable})
+        raw_label = row['is_recoverable']
+        is_recoverable = raw_label if isinstance(raw_label, bool) else str(raw_label).strip().lower() in {'true', '1', 'yes', 'y'}
+        item = dict(row)
+        item.update({'payment_id': payment_id, 'amount': amount, 'failure_reason': failure_reason, 'retry_count': retry_count, 'is_recoverable': is_recoverable})
+        normalized.append(item)
     return normalized
 
 
@@ -59,6 +58,47 @@ def model_status(db: Session = Depends(get_db)):
     if rows and ml_model.training_rows != len(rows):
         ml_model.fit(rows)
     return ml_model.status()
+
+
+@router.post('/predict-recovery')
+def predict_recovery(payload: dict, db: Session = Depends(get_db)):
+    """Score one payment with the trained model and translate it into a safe recovery plan."""
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail='Payment payload must be an object.')
+    rows = _latest_batch_rows(db)
+    if rows and ml_model.training_rows != len(rows):
+        ml_model.fit(rows)
+    try:
+        prediction = ml_model.predict(payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    plan = build_recovery_plan({**payload, 'ml_recoverability': prediction['recoverability_probability']})
+    return {'prediction': prediction, 'recovery_plan': plan}
+
+
+@router.post('/predict-batch')
+def predict_batch(payload: dict, db: Session = Depends(get_db)):
+    """Score a batch and return recovery recommendations without executing payments."""
+    batch = payload.get('rows') if isinstance(payload, dict) else None
+    if not isinstance(batch, list) or not batch:
+        raise HTTPException(status_code=400, detail='rows must be a non-empty list.')
+    if len(batch) > RUNTIME_EVALUATION_LIMIT:
+        raise HTTPException(status_code=400, detail=f'Batch prediction is limited to {RUNTIME_EVALUATION_LIMIT} rows.')
+    rows = _latest_batch_rows(db)
+    if rows and ml_model.training_rows != len(rows):
+        ml_model.fit(rows)
+    try:
+        predictions = ml_model.predict_many(batch)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    recommendations = []
+    for row, prediction in zip(batch, predictions):
+        recommendations.append({
+            'payment_id': row.get('payment_id'),
+            'prediction': prediction,
+            'recovery_plan': build_recovery_plan({**row, 'ml_recoverability': prediction['recoverability_probability']}),
+        })
+    return {'records': recommendations, 'ml_model': ml_model.status()}
 
 
 @router.post('/run')
@@ -108,17 +148,7 @@ def import_uploaded_dataset(payload: dict, db: Session = Depends(get_db)):
         db.rollback(); raise HTTPException(status_code=409, detail=f'Could not import dataset: {exc.__class__.__name__}')
     ml_status = ml_model.fit(normalized)
     evaluation = evaluate_database_payments(db, limit=min(len(normalized), RUNTIME_EVALUATION_LIMIT), batch_id=batch_id)
-    return {
-        'status': 'IMPORTED',
-        'batch_id': batch_id,
-        'records_imported': len(normalized),
-        'dataset_source': 'uploaded_csv_database',
-        'read_only_after_import': True,
-        'evaluation_limit': min(len(normalized), RUNTIME_EVALUATION_LIMIT),
-        'evaluation_is_bounded': len(normalized) > RUNTIME_EVALUATION_LIMIT,
-        'ml_model': ml_status,
-        'evaluation': evaluation,
-    }
+    return {'status': 'IMPORTED', 'batch_id': batch_id, 'records_imported': len(normalized), 'dataset_source': 'uploaded_csv_database', 'read_only_after_import': True, 'evaluation_limit': min(len(normalized), RUNTIME_EVALUATION_LIMIT), 'evaluation_is_bounded': len(normalized) > RUNTIME_EVALUATION_LIMIT, 'ml_model': ml_status, 'evaluation': evaluation}
 
 
 @router.get('/evaluate-database')
