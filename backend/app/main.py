@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from .config import settings
 from .database import engine, Base
 from .api import webhooks, analytics, audit, simulation, review, failure_injection, system, payments
 
@@ -31,6 +32,6 @@ def read_root():
     return {
         'message': 'RecoverAI API is running',
         'status': 'healthy',
-        'execution_mode': 'razorpay_test_mode' if False else 'simulation',
+        'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
         'version': '1.3.0',
     }
