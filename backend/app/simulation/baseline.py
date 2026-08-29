@@ -7,6 +7,7 @@ def run_baseline(dataset):
     Ground truth is used only for outcome scoring.
     """
     total = len(dataset)
+    revenue_at_risk = sum(float(p.get('amount', 0) or 0) for p in dataset)
     recovered = 0
     revenue = 0.0
     unnecessary = 0
@@ -26,9 +27,11 @@ def run_baseline(dataset):
     return {
         'strategy': 'BLIND_RETRY',
         'total_transactions': total,
+        'revenue_at_risk': round(revenue_at_risk, 2),
         'recovered_payments': recovered,
         'revenue_recovered': round(revenue, 2),
         'recovery_rate': round((recovered / total * 100) if total else 0, 2),
+        'revenue_recovery_rate': round((revenue / revenue_at_risk * 100) if revenue_at_risk else 0, 2),
         'unnecessary_retries': unnecessary,
         'unsafe_actions_blocked': 0,
     }
