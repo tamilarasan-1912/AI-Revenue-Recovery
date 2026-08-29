@@ -1,0 +1,45 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from ..config import settings
+from ..database import get_db
+
+router = APIRouter()
+
+
+@router.get('/health')
+def health(db: Session = Depends(get_db)):
+    database = 'ok'
+    try:
+        db.execute(text('SELECT 1'))
+    except Exception:
+        database = 'error'
+    return {
+        'status': 'healthy' if database == 'ok' else 'degraded',
+        'database': database,
+        'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
+        'test_keys_configured': bool(settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET),
+        'webhook_signature_configured': bool(settings.RAZORPAY_WEBHOOK_SECRET),
+        'llm_provider': settings.LLM_PROVIDER,
+        'version': '1.3.0',
+    }
+
+
+@router.get('/policies')
+def policies():
+    return {
+        'policy_version': 'v1.3',
+        'max_retries': settings.MAX_RETRIES,
+        'min_confidence_threshold': settings.MIN_CONFIDENCE_THRESHOLD,
+        'intervention_cost': settings.INTERVENTION_COST,
+        'max_customer_contacts': settings.MAX_CUSTOMER_CONTACTS,
+        'allowed_actions': settings.ALLOWED_ACTIONS,
+        'rules': [
+            {'id': 'FRAUD_SIGNAL', 'effect': 'STOP', 'description': 'Fraud signals override recovery recommendations.'},
+            {'id': 'MAX_RETRIES_EXCEEDED', 'effect': 'STOP', 'description': 'Retry is stopped after the configured retry budget.'},
+            {'id': 'LOW_CONFIDENCE', 'effect': 'HUMAN_REVIEW', 'description': 'Low-confidence recommendations require merchant approval.'},
+            {'id': 'ECONOMIC_THRESHOLD_NOT_MET', 'effect': 'STOP', 'description': 'Interventions below the configured economic threshold are not executed.'},
+            {'id': 'ACTION_NOT_ALLOWED', 'effect': 'BLOCK', 'description': 'Unknown actions can never reach the executor.'},
+            {'id': 'WAIT_FOR_LATER_RETRY_WINDOW', 'effect': 'HUMAN_REVIEW', 'description': 'Deferred recovery is not treated as an immediate money action.'},
+        ],
+    }
