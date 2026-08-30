@@ -13,7 +13,7 @@ from typing import Any
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.feature_extraction import DictVectorizer
-from sklearn.metrics import accuracy_score, r2_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
@@ -44,7 +44,7 @@ class RecoveryMLModel:
         self.regressor: Pipeline | None = None
         self.training_rows = 0
         self.classes: list[str] = []
-        self.version = "recoverability-rf-v3-payment-behaviour"
+        self.version = "recoverability-rf-v4-heldout-metrics"
         self.training_metrics: dict[str, Any] = {}
         self.feature_names: list[str] = []
 
@@ -142,10 +142,14 @@ class RecoveryMLModel:
             classes = list(model.named_steps["model"].classes_)
             positive_index = classes.index("recoverable")
             positive_y = [1 if label == "recoverable" else 0 for label in test_y]
+            predicted_positive = [1 if label == "recoverable" else 0 for label in predictions]
             return {
                 "holdout_available": True,
                 "test_rows": len(test_rows),
                 "accuracy": round(float(accuracy_score(test_y, predictions)), 4),
+                "precision": round(float(precision_score(positive_y, predicted_positive, zero_division=0)), 4),
+                "recall": round(float(recall_score(positive_y, predicted_positive, zero_division=0)), 4),
+                "f1": round(float(f1_score(positive_y, predicted_positive, zero_division=0)), 4),
                 "roc_auc": round(float(roc_auc_score(positive_y, probabilities[:, positive_index])), 4),
             }
         except Exception as exc:
