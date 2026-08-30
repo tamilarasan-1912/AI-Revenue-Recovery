@@ -7,6 +7,8 @@ and safety boundary.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Any
 
@@ -48,6 +50,18 @@ class RecoveryMLModel:
         self.version = "recoverability-rf-v4-heldout-metrics"
         self.training_metrics: dict[str, Any] = {}
         self.feature_names: list[str] = []
+
+    @staticmethod
+    def _training_identity(rows: list[dict[str, Any]]) -> str:
+        compact = []
+        for row in rows:
+            compact.append({
+                key: row.get(key)
+                for key in sorted(row)
+                if key != 'features' or isinstance(row.get(key), dict)
+            })
+        payload = json.dumps(compact, sort_keys=True, separators=(',', ':'), default=str)
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]
 
     @staticmethod
     def _features(row: dict[str, Any]) -> dict[str, Any]:
@@ -96,7 +110,7 @@ class RecoveryMLModel:
         self.classifier = Pipeline([("features", DictVectorizer(sparse=True)), ("model", classifier)])
         self.classifier.fit(x, y)
         self.training_rows = len(clean)
-        self.training_key = training_key
+        self.training_key = training_key or self._training_identity(clean)
         self.classes = list(getattr(classifier, "classes_", unique))
         self.feature_names = list(self.classifier.named_steps["features"].get_feature_names_out())
 
