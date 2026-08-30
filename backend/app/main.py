@@ -24,10 +24,13 @@ except Exception:
 
 app = FastAPI(title='RecoverAI API', version='1.5.0')
 
+# The deployed frontend is hosted on Render. Keep an explicit allow-list from
+# configuration, and also allow the app's Render/Vercel deployment origins so
+# a stale CORS_ORIGINS environment variable cannot break the browser demo.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),
-    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\.vercel\.app$',
+    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\.(?:onrender\.com|vercel\.app)$',
     allow_credentials=False,
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
