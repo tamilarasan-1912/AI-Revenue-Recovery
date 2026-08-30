@@ -7,6 +7,14 @@ def test_benchmark_is_reproducible():
     assert first == second
 
 
+def test_benchmark_scores_an_independent_holdout():
+    result = run_evaluation(1000, seed=42)
+    assert result['evaluation_protocol'].startswith('model trained on an independent synthetic cohort')
+    assert result['training_dataset_size'] == 1000
+    assert result['dataset_size'] == 1000
+    assert result['recoverai']['ml_model']['training_rows'] == 1000
+
+
 def test_different_seed_changes_synthetic_cohort():
     first = run_evaluation(1000, seed=42)
     second = run_evaluation(1000, seed=123)
@@ -27,6 +35,8 @@ def test_multi_seed_report_is_aggregated_not_cherry_picked():
     result = run_multi_seed_evaluation(500, [42, 123, 456])
     assert result['aggregate']['runs'] == 3
     assert result['aggregate']['total_transactions_evaluated'] == 1500
+    assert result['training_dataset_size_per_run'] == 1000
+    assert result['evaluation_protocol'].startswith('independent training cohort per seed')
     assert 'incremental_revenue_mean' in result['aggregate']
     assert 'incremental_revenue_stddev' in result['aggregate']
     assert 'improvement_percentage_mean' in result['aggregate']
