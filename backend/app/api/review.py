@@ -38,7 +38,6 @@ def _load_execution_case(db: Session, execution_id: str):
 
 def _execute_allowed(db, row, policy, case, payment):
     result = executor.execute(db, {'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'retry_count': payment.retry_count, 'recommended_action': row.action.value, 'ai_confidence': case.ai_confidence or 0.0, 'is_recoverable': (row.result_details or {}).get('actual_is_recoverable')}, 'allow', row.action.value, row.policy_decision_id)
-    # Do not create another audit event when the executor returned an idempotent replay.
     if not result.get('idempotent_replay'):
         db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'execution_{row.id}', payment_id=payment.id, action=row.action.value, outcome=result['status']))
         db.commit()
@@ -91,9 +90,9 @@ def create_dataset_review_case(scenario: str | None = Query(None), db: Session =
 def _materialize_active_batch_reviews(db: Session):
     """Synchronize the active cohort's HUMAN_REVIEW decisions into the actionable queue.
 
-    The synchronization is per dataset row, not an all-or-nothing batch check. This is
-    important after a reviewer approves/rejects some rows or after an earlier materializer
-    run was interrupted: missing rows are created while existing rows are preserved.
+    Parent records are flushed before their children to satisfy the explicit foreign-key
+    chain payments -> recovery_cases -> policy_decisions -> executions. This fixes the
+    PostgreSQL ForeignKeyViolation that previously caused the review queue to stay empty.
     """
     rows = _active_batch_rows(db)
     if not rows:
@@ -144,8 +143,22 @@ def _materialize_active_batch_reviews(db: Session):
                 'materialized_from_active_cohort': True,
             },
         )
-        db.add_all([payment, case, policy, execution])
-        db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'review_created_{execution_id}', payment_id=payment_id, action=action.value, outcome='PENDING_HUMAN_REVIEW'))
+        audit = AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=f'review_created_{execution_id}', payment_id=payment_id, action=action.value, outcome='PENDING_HUMAN_REVIEW')
+
+        # IMPORTANT: persist the FK dependency chain explicitly. The previous
+        # db.add_all([payment, case, policy, execution]) could flush the execution
+        # before PostgreSQL could see its referenced policy_decision row, producing:
+        # executions_policy_decision_id_fkey / ForeignKeyViolation.
+        db.add(payment)
+        db.flush()
+        db.add(case)
+        db.flush()
+        db.add(policy)
+        db.flush()
+        db.add(execution)
+        db.add(audit)
+        db.flush()
+
         existing_keys.add(idempotency_key)
         created += 1
 
@@ -167,11 +180,6 @@ def pending_reviews(db: Session = Depends(get_db)):
     query = db.query(ExecutionRecord).filter(ExecutionRecord.status == 'PENDING_HUMAN_REVIEW')
     all_pending = query.order_by(ExecutionRecord.created_at.asc()).all()
 
-    # The queue must reflect the same active cohort as the dashboard/audit log.  Older
-    # versions filtered exclusively on the synthetic `review:<batch>:...` idempotency
-    # prefix, which hid legitimate PENDING_HUMAN_REVIEW records created by /review/demo
-    # (their idempotency key is `recover:...`).  Keep active-batch materialized cases and
-    # dataset cases from the same cohort, while excluding unrelated historical records.
     if active_batch:
         rows = [
             row for row in all_pending
