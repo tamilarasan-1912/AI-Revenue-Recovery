@@ -16,7 +16,7 @@ except Exception:
 # Keep the FastAPI application itself free of CORS middleware. CORS is applied
 # around the complete ASGI application at the bottom of this file so unhandled
 # 500 responses also carry CORS headers.
-app = FastAPI(title='RecoverAI API', version='1.5.0')
+app = FastAPI(title='RecoverAI API', version='1.5.1')
 
 
 @app.exception_handler(Exception)
@@ -49,7 +49,7 @@ def read_root():
         'message': 'RecoverAI API is running',
         'status': 'healthy',
         'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
-        'version': '1.5.0',
+        'version': '1.5.1',
     }
 
 
