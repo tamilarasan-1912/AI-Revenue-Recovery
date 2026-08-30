@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.api.review import create_dataset_review_case
 from app.database import Base
 from app.engine.executor import executor
 from app.models import ActionType, ExecutionRecord, Payment, PaymentStatus, PolicyDecisionEnum, PolicyDecisionRecord, RecoveryCase, ImportedDatasetRow
@@ -11,6 +12,24 @@ def make_db():
     engine = create_engine('sqlite:///:memory:', connect_args={'check_same_thread': False})
     Base.metadata.create_all(bind=engine)
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
+
+
+def test_dataset_review_case_does_not_use_removed_ml_model_attribute():
+    db = make_db()
+    try:
+        for i, recoverable in enumerate([True, False, True, False], start=1):
+            db.add(ImportedDatasetRow(
+                id=f'row-review-{i}', batch_id='review-batch', row_number=i,
+                payment_id=f'review-pay-{i}', amount=1000 + i,
+                failure_reason='timeout_network' if recoverable else 'card_expired',
+                retry_count=0, is_recoverable=recoverable,
+            ))
+        db.commit()
+        result = create_dataset_review_case(None, db)
+        assert result['scenario'] == 'UPLOADED_DATASET'
+        assert result['execution_id'].startswith('dataset_execution_')
+    finally:
+        db.close()
 
 
 def test_database_evaluation_returns_stable_policy_keys():
