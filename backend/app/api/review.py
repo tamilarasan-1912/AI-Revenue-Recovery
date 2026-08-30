@@ -66,7 +66,7 @@ def _make_case_from_source(source, ml_prediction):
 def _create_runtime_case(db: Session, source: dict, ml_prediction: dict, persist: bool):
     data, risk, strategy, recovery_plan, action, policy_result, decision_enum = _make_case_from_source(source, ml_prediction)
     status = 'PENDING_HUMAN_REVIEW' if decision_enum is PolicyDecisionEnum.HUMAN_REVIEW else ('STOPPED' if decision_enum is PolicyDecisionEnum.STOP else ('BLOCKED' if decision_enum is PolicyDecisionEnum.BLOCK else 'PENDING'))
-    payment_id = case_id = policy_id = execution_id = None
+    payment_id = case_id = execution_id = None
     if persist:
         token = uuid.uuid4().hex[:12]
         payment_id = f'dataset_payment_{token}'; case_id = f'dataset_case_{token}'; policy_id = f'dataset_policy_{token}'; execution_id = f'dataset_execution_{token}'
@@ -96,7 +96,7 @@ def _materialize_active_batch_reviews(db: Session):
     rows = _active_batch_rows(db)
     if not rows: return 0
     batch_id = rows[0].batch_id
-    existing_keys = {e.idempotency_key for e in db.query(ExecutionRecord).filter(ExecutionRecord.idempotency_key.like(f'review:{batch_id}:%')).all()}
+    existing_keys = {e.idempotency_key for e in db.query(ExecutionRecord.idempotency_key).filter(ExecutionRecord.idempotency_key.like(f'review:{batch_id}:%')).all()}
     if existing_keys: return 0
     evaluation = evaluate_database_payments(db, limit=min(len(rows), 1000), batch_id=batch_id)
     review_records = [r for r in evaluation.get('records', []) if r.get('policy_decision') == PolicyDecisionEnum.HUMAN_REVIEW.value]
@@ -123,15 +123,12 @@ def pending_reviews(db: Session = Depends(get_db)):
     try: _materialize_active_batch_reviews(db)
     except Exception as exc: db.rollback(); logger.exception('Could not synchronize active cohort human-review cases: %s', exc)
     active_rows = _active_batch_rows(db); active_batch = active_rows[0].batch_id if active_rows else None
-    all_pending = db.query(ExecutionRecord).filter(ExecutionRecord.status == 'PENDING_HUMAN_REVIEW').order_by(ExecutionRecord.created_at.asc()).all()
-    rows = [row for row in all_pending if active_batch and ((row.idempotency_key or '').startswith(f'review:{active_batch}:') or (row.result_details or {}).get('source_batch') == active_batch)]
+    if not active_batch: return []
+    joined = db.query(ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment).join(PolicyDecisionRecord, PolicyDecisionRecord.id == ExecutionRecord.policy_decision_id).join(RecoveryCase, RecoveryCase.id == PolicyDecisionRecord.recovery_case_id).join(Payment, Payment.id == RecoveryCase.payment_id).filter(ExecutionRecord.status == 'PENDING_HUMAN_REVIEW').order_by(ExecutionRecord.created_at.asc()).all()
     result = []
-    for row in rows:
-        try:
-            policy = db.query(PolicyDecisionRecord).filter(PolicyDecisionRecord.id == row.policy_decision_id).first(); case = db.query(RecoveryCase).filter(RecoveryCase.id == (policy.recovery_case_id if policy else '')).first() if policy else None; payment = db.query(Payment).filter(Payment.id == (case.payment_id if case else '')).first() if case else None
-            if not policy or not case or not payment: continue
-            result.append({'execution_id': row.id, 'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'failure_reason': payment.failure_reason, 'recommended_action': row.action.value if row.action else None, 'policy_rules': policy.rules_triggered or [], 'ai_confidence': case.ai_confidence, 'created_at': row.created_at, 'ml_prediction': (row.result_details or {}).get('ml_prediction'), 'recovery_plan': (row.result_details or {}).get('recovery_plan')})
-        except Exception: logger.exception('Skipping malformed review row: %s', row.id)
+    for row, policy, case, payment in joined:
+        if not ((row.idempotency_key or '').startswith(f'review:{active_batch}:') or (row.result_details or {}).get('source_batch') == active_batch): continue
+        result.append({'execution_id': row.id, 'case_id': case.id, 'payment_id': payment.id, 'amount': payment.amount, 'failure_reason': payment.failure_reason, 'recommended_action': row.action.value if row.action else None, 'policy_rules': policy.rules_triggered or [], 'ai_confidence': case.ai_confidence, 'created_at': row.created_at, 'ml_prediction': (row.result_details or {}).get('ml_prediction'), 'recovery_plan': (row.result_details or {}).get('recovery_plan')})
     return result
 
 @router.post('/{execution_id}/execute')
