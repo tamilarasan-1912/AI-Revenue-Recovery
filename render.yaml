@@ -8,6 +8,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/system/live
+    autoDeployTrigger: commit
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -35,9 +36,10 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
+    autoDeployTrigger: commit
     envVars:
       - key: VITE_API_URL
-        value: https://recoverai-api-zwr9.onrender.com
+        value: https://recoverai-api-zwr9.onrender.com/api
     routes:
       - type: rewrite
         source: /*
