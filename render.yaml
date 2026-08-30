@@ -2,6 +2,8 @@ services:
   - type: web
     name: recoverai-api
     runtime: python
+    plan: free
+    region: singapore
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -43,5 +45,7 @@ services:
 
 databases:
   - name: recoverai-db
+    plan: free
+    region: singapore
     databaseName: recoverai
     user: recoverai
