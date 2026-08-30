@@ -64,22 +64,14 @@ class RecoveryMLModel:
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]
 
     @staticmethod
-    def _finite_float(value: Any, default: float = 0.0) -> float:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return default
-        return number if math.isfinite(number) else default
-
-    @classmethod
-    def _features(cls, row: dict[str, Any]) -> dict[str, Any]:
-        amount = max(0.0, cls._finite_float(row.get("amount", 0)))
-        retry_count = max(0, int(cls._finite_float(row.get("retry_count", 0))))
+    def _features(row: dict[str, Any]) -> dict[str, Any]:
+        amount = float(row.get("amount", 0) or 0)
+        retry_count = int(row.get("retry_count", 0) or 0)
         features: dict[str, Any] = {
             "failure_reason": str(row.get("failure_reason", "unknown")).strip().lower(),
             "amount": amount,
             "retry_count": retry_count,
-            "amount_log": math.log1p(amount),
+            "amount_log": math.log1p(max(0.0, amount)),
             "retry_pressure": min(1.0, retry_count / 3.0),
         }
         for name in OPTIONAL_FEATURES:
@@ -89,13 +81,14 @@ class RecoveryMLModel:
             if name in BOOLEAN_FEATURES:
                 features[name] = str(value).strip().lower() in {"true", "1", "yes", "y"}
             elif name in NUMERIC_FEATURES:
-                number = cls._finite_float(value, float("nan"))
-                if math.isfinite(number):
-                    features[name] = number
+                try:
+                    features[name] = float(value)
+                except (TypeError, ValueError):
+                    continue
             else:
                 features[name] = str(value).strip().lower()
-        outstanding = max(0.0, cls._finite_float(row.get("outstanding_amount", amount), amount))
-        success_rate = max(0.0, min(1.0, cls._finite_float(row.get("previous_payment_success_rate", 1.0), 1.0)))
+        outstanding = float(row.get("outstanding_amount", amount) or amount)
+        success_rate = float(row.get("previous_payment_success_rate", 1.0) or 1.0)
         features["outstanding_to_amount"] = outstanding / max(amount, 1.0)
         features["payment_history_risk"] = max(0.0, min(1.0, 1.0 - success_rate))
         return features
@@ -123,15 +116,12 @@ class RecoveryMLModel:
 
         targets: list[float] = []
         for row in clean:
-            amount = max(0.0, self._finite_float(row.get("amount", 0)))
-            recovered_amount = row.get("recovered_amount")
-            recovery_rate = row.get("recovery_rate")
-            recovered_amount_number = self._finite_float(recovered_amount, float("nan")) if recovered_amount not in (None, "") else float("nan")
-            recovery_rate_number = self._finite_float(recovery_rate, float("nan")) if recovery_rate not in (None, "") else float("nan")
-            if math.isfinite(recovered_amount_number):
-                target = max(0.0, min(amount, recovered_amount_number))
-            elif math.isfinite(recovery_rate_number):
-                target = amount * max(0.0, min(1.0, recovery_rate_number))
+            amount = max(0.0, float(row.get("amount", 0) or 0))
+            if row.get("recovered_amount") not in (None, ""):
+                target = max(0.0, min(amount, float(row["recovered_amount"])))
+            elif row.get("recovery_rate") not in (None, ""):
+                rate = max(0.0, min(1.0, float(row["recovery_rate"])))
+                target = amount * rate
             else:
                 target = amount if bool(row.get("is_recoverable")) else 0.0
             targets.append(target)
@@ -194,8 +184,8 @@ class RecoveryMLModel:
         for i, probability_row in enumerate(probabilities):
             probability_map = {label: float(prob) for label, prob in zip(classes, probability_row)}
             recoverable_probability = probability_map.get("recoverable", 0.0)
-            amount = max(0.0, self._finite_float(rows[i].get("amount", 0)))
-            expected_amount = None if expected[i] is None else round(min(amount, max(0.0, self._finite_float(expected[i]))), 2)
+            amount = max(0.0, float(rows[i].get("amount", 0) or 0))
+            expected_amount = None if expected[i] is None else round(min(amount, max(0.0, float(expected[i]))), 2)
             results.append({
                 "predicted_label": "recoverable" if recoverable_probability >= 0.5 else "not_recoverable",
                 "recoverability_probability": round(recoverable_probability, 4),
