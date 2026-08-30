@@ -65,7 +65,7 @@ export default function SimulationSafe() {
   const displayResult = useMemo(() => result, [result])
   const mapRun = (raw: any): Result => ({
     records: Number(raw.dataset_size || 0), revenueAtRisk: Number(raw.revenue_at_risk || 0), baselineRecovered: Number(raw.baseline?.revenue_recovered || 0), aiRecovered: Number(raw.recoverai?.revenue_recovered || 0), recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0), incremental: Number(raw.incremental_revenue || 0),
-    policy: { allow: Number(raw.recoverai?.action_counts?.RETRY || 0) + Number(raw.recoverai?.action_counts?.PAYMENT_LINK || 0), review: Number(raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) }, trainingSize: Number(raw.training_dataset_size || 0), protocol: raw.evaluation_protocol, source: 'backend',
+    policy: { allow: Number(raw.recoverai?.policy_decisions?.ALLOW || 0), review: Number(raw.recoverai?.policy_decisions?.HUMAN_REVIEW || raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) }, trainingSize: Number(raw.training_dataset_size || 0), protocol: raw.evaluation_protocol, source: 'backend',
   })
   const runBenchmark = async () => {
     setBusy(true); setMessage('Running the held-out ML benchmark…')
