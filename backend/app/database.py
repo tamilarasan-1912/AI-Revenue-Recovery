@@ -1,7 +1,6 @@
 from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy.pool import StaticPool
 from .config import settings
 from .runtime_dataset import get_dataset
 
@@ -51,13 +50,17 @@ def _get_fallback_sessionmaker():
 
 
 def _get_demo_sessionmaker():
-    """Process-local SQLite used only for an uploaded-CSV demo when Postgres is unavailable."""
+    """Persistent local SQLite used for uploaded-CSV demos when Postgres is unavailable.
+
+    This intentionally uses a file rather than in-memory SQLite so multiple
+    Render worker processes can observe the same uploaded dataset during a demo.
+    The real Postgres path is unchanged and remains the production source of truth.
+    """
     global _demo_engine, _DemoSessionLocal
     if _DemoSessionLocal is None:
         _demo_engine = create_engine(
-            'sqlite:///:memory:',
+            'sqlite:///./recoverai_demo.db',
             connect_args={'check_same_thread': False},
-            poolclass=StaticPool,
             pool_pre_ping=True,
         )
         Base.metadata.create_all(bind=_demo_engine)
@@ -100,7 +103,8 @@ def get_db(request: Request):
                 fallback_db.close()
             return
 
-        # Otherwise retain the narrower process-local uploaded-dataset demo path.
+        # Otherwise retain the narrower uploaded-dataset demo path. The demo DB
+        # is file-backed so all workers on the same Render service see the upload.
         if request.url.path.endswith('/simulation/import-dataset') or _demo_has_dataset() or get_dataset()[1]:
             demo_db = _get_demo_sessionmaker()()
             try:
