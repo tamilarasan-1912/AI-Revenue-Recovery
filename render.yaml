@@ -39,7 +39,7 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: VITE_API_URL
-        value: https://recoverai-api-zwr9.onrender.com/api
+        value: https://recoverai-api-zwr9.onrender.com
     routes:
       - type: rewrite
         source: /*
