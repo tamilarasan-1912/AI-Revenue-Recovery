@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from ..config import settings
@@ -9,26 +9,27 @@ router = APIRouter()
 
 @router.get('/health')
 def health(db: Session = Depends(get_db)):
-    database = 'ok'
     try:
         db.execute(text('SELECT 1'))
-    except Exception:
-        database = 'error'
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail='Database is not ready') from exc
     return {
-        'status': 'healthy' if database == 'ok' else 'degraded',
-        'database': database,
+        'status': 'healthy',
+        'database': 'ok',
         'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
         'test_keys_configured': bool(settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET),
         'webhook_signature_configured': bool(settings.RAZORPAY_WEBHOOK_SECRET),
+        'webhook_signature_required': settings.REQUIRE_WEBHOOK_SIGNATURE,
         'llm_provider': settings.LLM_PROVIDER,
-        'version': '1.3.0',
+        'sqlite_fallback_enabled': settings.ALLOW_SQLITE_FALLBACK,
+        'version': '1.5.0',
     }
 
 
 @router.get('/policies')
 def policies():
     return {
-        'policy_version': 'v1.3',
+        'policy_version': 'v1.5',
         'max_retries': settings.MAX_RETRIES,
         'min_confidence_threshold': settings.MIN_CONFIDENCE_THRESHOLD,
         'intervention_cost': settings.INTERVENTION_COST,
