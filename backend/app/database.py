@@ -1,4 +1,3 @@
-import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
@@ -30,20 +29,14 @@ _fallback_engine = None
 _FallbackSessionLocal = None
 
 
-def _fallback_url() -> str:
-    # Vercel/serverless filesystems are not persistent in the project folder;
-    # /tmp is the writable location available to the function. Local/Docker
-    # development keeps the fallback beside the backend process.
-    if os.getenv('VERCEL'):
-        return 'sqlite:////tmp/recoverai_fallback.db'
-    return 'sqlite:///./recoverai_fallback.db'
-
-
 def _get_fallback_sessionmaker():
+    """Explicit local-demo fallback; never silently replace production Postgres."""
     global _fallback_engine, _FallbackSessionLocal
+    if not settings.ALLOW_SQLITE_FALLBACK:
+        raise RuntimeError('Primary database is unavailable and ALLOW_SQLITE_FALLBACK is disabled')
     if _FallbackSessionLocal is None:
         _fallback_engine = create_engine(
-            _fallback_url(),
+            'sqlite:///./recoverai_fallback.db',
             connect_args={'check_same_thread': False},
             pool_pre_ping=True,
         )
@@ -60,6 +53,8 @@ def get_db():
     except Exception:
         db.rollback()
         db.close()
+        if not settings.ALLOW_SQLITE_FALLBACK:
+            raise
         fallback_db = _get_fallback_sessionmaker()()
         try:
             yield fallback_db
