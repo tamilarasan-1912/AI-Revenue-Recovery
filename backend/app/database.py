@@ -35,7 +35,7 @@ _DemoSessionLocal = None
 
 
 def _get_fallback_sessionmaker():
-    """Explicit persistent local-demo fallback; never silently replaces production Postgres."""
+    """Persistent local fallback used when explicitly enabled for demo/degraded deployments."""
     global _fallback_engine, _FallbackSessionLocal
     if not settings.ALLOW_SQLITE_FALLBACK:
         raise RuntimeError('Primary database is unavailable and ALLOW_SQLITE_FALLBACK is disabled')
@@ -87,8 +87,20 @@ def get_db(request: Request):
     except Exception as exc:
         db.rollback()
         db.close()
-        # An uploaded CSV is an explicit demo data source. It can be imported and reused
-        # when Postgres is unavailable without enabling the generic SQLite fallback.
+
+        # If the deployment explicitly enables SQLite fallback, use the same
+        # persistent fallback for every API route. This is important because
+        # dataset import, review/demo, analytics/dashboard, and health must all
+        # observe the same database state when Postgres is temporarily unavailable.
+        if settings.ALLOW_SQLITE_FALLBACK:
+            fallback_db = _get_fallback_sessionmaker()()
+            try:
+                yield fallback_db
+            finally:
+                fallback_db.close()
+            return
+
+        # Otherwise retain the narrower process-local uploaded-dataset demo path.
         if request.url.path.endswith('/simulation/import-dataset') or _demo_has_dataset() or get_dataset()[1]:
             demo_db = _get_demo_sessionmaker()()
             try:
@@ -96,12 +108,7 @@ def get_db(request: Request):
             finally:
                 demo_db.close()
             return
-        if not settings.ALLOW_SQLITE_FALLBACK:
-            raise HTTPException(status_code=503, detail='Primary database is unavailable') from exc
-        fallback_db = _get_fallback_sessionmaker()()
-        try:
-            yield fallback_db
-        finally:
-            fallback_db.close()
+
+        raise HTTPException(status_code=503, detail='Primary database is unavailable') from exc
     else:
         db.close()
