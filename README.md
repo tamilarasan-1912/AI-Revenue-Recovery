@@ -16,25 +16,6 @@ RecoverAI combines **payment-event handling, behavioural ML, AI-assisted diagnos
 
 ---
 
-## Why payment recovery needs more than a retry button
-
-A failed payment is not automatically a lost customer or a permanently lost transaction. The correct next action depends on **why the payment failed, the customer's payment history, retry pressure, timing, outstanding amount, fraud/risk signals, and the economics of another intervention**.
-
-Payment platforms already use retry and recovery mechanisms because some failures are temporary while others are effectively final. Razorpay documents recurring-payment failures such as expired cards, insufficient balance and blocked cards, and exposes webhook-driven retry handling. Adyen's Auto Rescue similarly uses logic to decide which refused recurring payments should be retried later and can provide a payment-link fallback. Stripe has described ML-based Smart Retries as a way to estimate better retry timing from payment and behavioural signals.
-
-RecoverAI takes that idea further by making the decision process **inspectable and policy-bounded**:
-
-- AI/ML produces recommendations and probabilities, not payment authority.
-- Deterministic policy rules decide whether an intervention is allowed.
-- Fraud signals can force an immediate stop.
-- Retry budgets are bounded.
-- Low-confidence cases can be escalated to a human.
-- Late successful payments reconcile and cancel stale recovery work.
-- Every execution has a deterministic idempotency boundary.
-- The benchmark separates model training from evaluation to avoid reporting in-sample lift as production evidence.
-
----
-
 ## Architecture
 
 ```mermaid
@@ -121,11 +102,6 @@ flowchart TD
     V --> W[Analytics + revenue-at-risk metrics]
     W --> Z[Audit trail]
 ```
-
-Razorpay documents webhook-based handling for subscription-payment failures, while Adyen documents retry scheduling, retry outcomes, and fallback payment-link behaviour. These patterns support the project's event-driven, retry-bounded design.
-
----
-
 ## Core capabilities
 
 ### 1. Payment event ingestion
@@ -307,116 +283,6 @@ AI-Revenue-Recovery/
 └── README.md
 ```
 
----
-
-## Quick start
-
-### Option A — Docker Compose
-
-```bash
-git clone https://github.com/tamilarasan-1912/AI-Revenue-Recovery.git
-cd AI-Revenue-Recovery
-cp .env.example .env
-docker compose up --build
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
-
-### Option B — Run backend locally
-
-```bash
-cd backend
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Run the frontend locally
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Run backend tests
-
-```bash
-cd backend
-pytest -q
-```
-
-### Build the frontend
-
-```bash
-cd frontend
-npm run build
-```
-
----
-
-## Configuration
-
-Copy the example environment file and configure the variables required for your environment:
-
-```text
-DATABASE_URL=<PostgreSQL connection string>
-RAZORPAY_KEY_ID=<test-mode key>
-RAZORPAY_KEY_SECRET=<test secret>
-RAZORPAY_WEBHOOK_SECRET=<webhook secret>
-ENABLE_RAZORPAY_TEST_ACTIONS=false
-ALLOW_SQLITE_FALLBACK=false
-REQUIRE_WEBHOOK_SIGNATURE=true
-WEBHOOK_MAX_AGE_SECONDS=300
-LLM_PROVIDER=deterministic
-```
-
-### Safety defaults
-
-Keep the following defaults for a safe demo/development environment:
-
-```text
-ENABLE_RAZORPAY_TEST_ACTIONS=false
-REQUIRE_WEBHOOK_SIGNATURE=true
-ALLOW_SQLITE_FALLBACK=false
-LLM_PROVIDER=deterministic
-```
-
-The application exposes an explicit execution mode: `razorpay_test_mode` when test actions are enabled, otherwise `simulation`.
-
-**Never commit `.env`, API secrets, webhook secrets, or production credentials.**
-
----
-
-## Safety model
-
-RecoverAI is intentionally designed around **bounded autonomy**.
-
-```text
-AI / ML
-  ↓
-Recommendation
-  ↓
-Deterministic policy
-  ↓
-Authorization
-  ↓
-Idempotent executor
-  ↓
-Payment adapter
-```
-
-This prevents a hallucinated or over-confident model output from directly becoming a payment action.
-
 | Risk | Control |
 |---|---|
 | Fraudulent transaction | Immediate policy `STOP` |
@@ -472,25 +338,6 @@ This matters because revenue recovery is not just a prediction problem; it is a 
 
 ---
 
-## API surface
-
-The FastAPI application exposes dedicated API routers for:
-
-```text
-/api/webhooks
-/api/analytics
-/api/audit
-/api/simulation
-/api/review
-/api/recovery
-/api/failure-injection
-/api/system
-/api/payments
-```
-
-For interactive API exploration during local development, FastAPI's generated OpenAPI/Swagger documentation is available at the normal FastAPI docs endpoint when the server is running.
-
----
 
 ## Deployment
 
@@ -501,29 +348,6 @@ The repository includes deployment configuration for:
 - **Docker**: local and containerized deployment
 
 The production architecture should keep PostgreSQL as the primary database and maintain the same policy, webhook, and execution boundaries used in the local system.
-
----
-
-## Buildathon positioning — Razorpay Track 03
-
-RecoverAI is designed around the core evaluation dimensions of an AI revenue-recovery system:
-
-**1. Recover more legitimate revenue**  
-Use payment behaviour and failure context to estimate which cases are worth intervening on.
-
-**2. Avoid harmful retries**  
-Apply deterministic retry limits, fraud stops, confidence thresholds, and economic thresholds.
-
-**3. Show evidence**  
-Benchmark against a baseline using held-out evaluation cohorts and repeated seeds.
-
-**4. Make decisions auditable**  
-Record the recommendation, policy version, triggered rules, execution outcome, and resulting payment state.
-
-**5. Demonstrate engineering maturity**  
-Handle duplicate events, late payment success, idempotency, test-mode boundaries, failure injection, CI, and reproducible simulation.
-
-This is the core distinction of RecoverAI: **the demo is not only an AI prediction; it is an evidence-backed recovery control system.**
 
 ---
 
@@ -542,9 +366,9 @@ These references are used for design context; RecoverAI's benchmark values and i
 
 ## Project status
 
-**Buildathon prototype with production-oriented safety boundaries.**
+**prototype with production-oriented safety boundaries.**
 
-Simulation is the default execution boundary. Razorpay Test Mode execution is opt-in. Live-money movement is not enabled by default.
+Simulation is the default execution boundary. Live-money movement is not enabled by default.
 
 ---
 
