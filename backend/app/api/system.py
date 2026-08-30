@@ -7,6 +7,17 @@ from ..database import get_db
 router = APIRouter()
 
 
+@router.get('/live')
+def liveness():
+    """Cheap process liveness probe for Render.
+
+    This endpoint intentionally does not touch Postgres. Render health checks must
+    not depend on a slow/unavailable external dependency, otherwise a healthy
+    application process can be removed from traffic before the database recovers.
+    """
+    return {'status': 'alive', 'version': '1.5.0'}
+
+
 @router.get('/health')
 def health(db: Session = Depends(get_db)):
     try:
