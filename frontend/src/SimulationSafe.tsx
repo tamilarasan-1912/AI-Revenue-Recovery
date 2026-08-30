@@ -63,10 +63,21 @@ export default function SimulationSafe() {
   const [busy, setBusy] = useState(false)
 
   const displayResult = useMemo(() => result, [result])
-  const mapRun = (raw: any): Result => ({
-    records: Number(raw.dataset_size || 0), revenueAtRisk: Number(raw.revenue_at_risk || 0), baselineRecovered: Number(raw.baseline?.revenue_recovered || 0), aiRecovered: Number(raw.recoverai?.revenue_recovered || 0), recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0), incremental: Number(raw.incremental_revenue || 0),
-    policy: { allow: Number(raw.recoverai?.policy_decisions?.ALLOW || 0), review: Number(raw.recoverai?.policy_decisions?.HUMAN_REVIEW || raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) }, trainingSize: Number(raw.training_dataset_size || 0), protocol: raw.evaluation_protocol, source: 'backend',
-  })
+  const mapRun = (raw: any): Result => {
+    const records = Number(raw.dataset_size || 0)
+    const reviews = Number(raw.recoverai?.human_reviews || 0)
+    const stops = Number(raw.recoverai?.stopped_by_policy || 0)
+    return {
+      records,
+      revenueAtRisk: Number(raw.revenue_at_risk || 0),
+      baselineRecovered: Number(raw.baseline?.revenue_recovered || 0),
+      aiRecovered: Number(raw.recoverai?.revenue_recovered || 0),
+      recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0),
+      incremental: Number(raw.incremental_revenue || 0),
+      policy: { allow: Math.max(0, records - reviews - stops), review: reviews, stop: stops },
+      trainingSize: Number(raw.training_dataset_size || 0), protocol: raw.evaluation_protocol, source: 'backend',
+    }
+  }
   const runBenchmark = async () => {
     setBusy(true); setMessage('Running the held-out ML benchmark…')
     try {
@@ -138,4 +149,3 @@ export default function SimulationSafe() {
       <div style={{ marginTop: 22, padding: 13, border: '1px solid #d7dbe0', borderRadius: 8, background: '#fff', fontSize: 12, color: '#656a73' }}><FlaskConical size={15} style={{ verticalAlign: 'middle', marginRight: 7 }}/> Simulation mode is isolated from live payment execution. No real-money transaction is initiated by this page.</div>
     </main>
   </div>
-}
