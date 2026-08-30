@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import PaymentsSafe from './PaymentsSafe'
 import './index.css'
+import './industry-fixes.css'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
