@@ -3,6 +3,7 @@ import random
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import ExecutionRecord, PolicyDecisionRecord, RecoveryCase, Payment, AuditLog, PaymentStatus, ActionType, PolicyDecisionEnum, ImportedDatasetRow
@@ -28,7 +29,7 @@ DEMO_SCENARIOS = [
 
 def _db_available(db: Session) -> bool:
     try:
-        db.execute('SELECT 1')
+        db.execute(text('SELECT 1'))
         return True
     except Exception:
         db.rollback()
