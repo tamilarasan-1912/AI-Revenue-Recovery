@@ -45,6 +45,11 @@ class RecoveryExecutor:
             return {'mode': 'RAZORPAY_TEST_MODE', 'action': 'PAYMENT_LINK', 'execution_boundary': 'External action failed safely', 'error': str(exc)}
 
     def execute(self, db, case: dict, policy_decision: str, action: str, policy_decision_id: str = ''):
+        # A human reviewer approval is an explicit authorization transition.
+        # It is not a new policy decision and must reuse the existing idempotent
+        # execution record created while the case was awaiting review.
+        if policy_decision == 'human_approved':
+            policy_decision = 'allow'
         if policy_decision not in {'allow', 'human_review'}:
             return {'status': 'BLOCKED', 'result_details': {'reason': f'Policy: {policy_decision}'}}
         if action not in {a.value for a in ActionType}:
