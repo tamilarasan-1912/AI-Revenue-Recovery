@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
@@ -63,7 +63,21 @@ def _get_demo_sessionmaker():
     return _DemoSessionLocal
 
 
-def get_db():
+def _demo_has_dataset() -> bool:
+    if _DemoSessionLocal is None:
+        return False
+    try:
+        from .models import ImportedDatasetRow
+        session = _DemoSessionLocal()
+        try:
+            return session.query(ImportedDatasetRow.id).first() is not None
+        finally:
+            session.close()
+    except Exception:
+        return False
+
+
+def get_db(request: Request):
     db = SessionLocal()
     try:
         db.execute(text('SELECT 1'))
@@ -71,8 +85,9 @@ def get_db():
     except Exception as exc:
         db.rollback()
         db.close()
-        batch_id, rows = get_dataset()
-        if rows:
+        # The uploaded CSV is an explicit demo data source. It may be imported even when
+        # Postgres is unavailable, and subsequent requests reuse the same process-local DB.
+        if request.url.path.endswith('/simulation/import-dataset') or _demo_has_dataset() or get_dataset()[1]:
             demo_db = _get_demo_sessionmaker()()
             try:
                 yield demo_db
