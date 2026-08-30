@@ -12,6 +12,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 5s
+
   backend:
     build: ./backend
     ports:
@@ -20,14 +22,22 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/recoverai
       LLM_PROVIDER: deterministic
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      ALLOW_SQLITE_FALLBACK: "false"
+      REQUIRE_WEBHOOK_SIGNATURE: ${REQUIRE_WEBHOOK_SIGNATURE:-true}
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/system/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
       db:
         condition: service_healthy
+
   frontend:
     build: ./frontend
     ports:
-      - '3000:3000'
-    environment:
-      VITE_API_URL: http://localhost:8000/api
+      - '3000:80'
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
