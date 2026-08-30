@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: recoverai-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/system/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: recoverai-db
+          property: connectionString
+      - key: LLM_PROVIDER
+        value: deterministic
+      - key: ENABLE_RAZORPAY_TEST_ACTIONS
+        value: "false"
+      - key: ALLOW_SQLITE_FALLBACK
+        value: "false"
+      - key: REQUIRE_WEBHOOK_SIGNATURE
+        value: "true"
+      - key: WEBHOOK_MAX_AGE_SECONDS
+        value: "300"
+      - key: CORS_ORIGINS
+        value: "*"
+
+databases:
+  - name: recoverai-db
+    databaseName: recoverai
+    user: recoverai
