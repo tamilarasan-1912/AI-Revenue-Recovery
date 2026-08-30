@@ -13,7 +13,7 @@ from typing import Any
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.feature_extraction import DictVectorizer
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, precision_score, r2_score, recall_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
@@ -43,6 +43,7 @@ class RecoveryMLModel:
         self.classifier: Pipeline | None = None
         self.regressor: Pipeline | None = None
         self.training_rows = 0
+        self.training_key: str | None = None
         self.classes: list[str] = []
         self.version = "recoverability-rf-v4-heldout-metrics"
         self.training_metrics: dict[str, Any] = {}
@@ -78,7 +79,7 @@ class RecoveryMLModel:
         features["payment_history_risk"] = max(0.0, min(1.0, 1.0 - success_rate))
         return features
 
-    def fit(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def fit(self, rows: list[dict[str, Any]], training_key: str | None = None) -> dict[str, Any]:
         clean = [r for r in rows if isinstance(r, dict)]
         if not clean:
             self.__init__()
@@ -95,6 +96,7 @@ class RecoveryMLModel:
         self.classifier = Pipeline([("features", DictVectorizer(sparse=True)), ("model", classifier)])
         self.classifier.fit(x, y)
         self.training_rows = len(clean)
+        self.training_key = training_key
         self.classes = list(getattr(classifier, "classes_", unique))
         self.feature_names = list(self.classifier.named_steps["features"].get_feature_names_out())
 
@@ -178,6 +180,7 @@ class RecoveryMLModel:
                 "expected_recovery_rate": None if expected_amount is None or amount <= 0 else round(expected_amount / amount, 4),
                 "model_version": self.version,
                 "training_rows": self.training_rows,
+                "training_key": self.training_key,
             })
         return results
 
@@ -190,6 +193,7 @@ class RecoveryMLModel:
             "trained": self.classifier is not None,
             "algorithm": algorithm,
             "training_rows": self.training_rows,
+            "training_key": self.training_key,
             "classes": self.classes,
             "model_version": self.version,
             "feature_count": len(self.feature_names),
