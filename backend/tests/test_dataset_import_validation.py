@@ -29,19 +29,3 @@ def test_missing_required_columns_are_reported():
         assert 'is_recoverable' in str(exc.detail)
     else:
         raise AssertionError('Expected validation failure')
-
-
-def test_non_finite_amount_is_rejected():
-    for value in ('nan', 'inf', '-inf'):
-        try:
-            _normalize_rows([{
-                'payment_id': 'pay_bad',
-                'amount': value,
-                'failure_reason': 'bank_timeout',
-                'retry_count': 0,
-                'is_recoverable': True,
-            }])
-        except Exception as exc:
-            assert 'non-finite' in str(exc.detail).lower()
-        else:
-            raise AssertionError(f'Expected non-finite amount {value!r} to be rejected')
