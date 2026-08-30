@@ -1,6 +1,7 @@
 from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import StaticPool
 from .config import settings
 from .runtime_dataset import get_dataset
 
@@ -56,6 +57,7 @@ def _get_demo_sessionmaker():
         _demo_engine = create_engine(
             'sqlite:///:memory:',
             connect_args={'check_same_thread': False},
+            poolclass=StaticPool,
             pool_pre_ping=True,
         )
         Base.metadata.create_all(bind=_demo_engine)
@@ -85,8 +87,8 @@ def get_db(request: Request):
     except Exception as exc:
         db.rollback()
         db.close()
-        # The uploaded CSV is an explicit demo data source. It may be imported even when
-        # Postgres is unavailable, and subsequent requests reuse the same process-local DB.
+        # An uploaded CSV is an explicit demo data source. It can be imported and reused
+        # when Postgres is unavailable without enabling the generic SQLite fallback.
         if request.url.path.endswith('/simulation/import-dataset') or _demo_has_dataset() or get_dataset()[1]:
             demo_db = _get_demo_sessionmaker()()
             try:
