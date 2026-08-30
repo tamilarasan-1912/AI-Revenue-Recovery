@@ -21,19 +21,12 @@ try:
 except Exception:
     logger.exception('Database initialization failed; API will report degraded readiness')
 
+# Keep the FastAPI application itself free of CORS middleware. CORS is applied
+# around the complete ASGI application at the bottom of this file. This is
+# intentional: Starlette's outer ServerErrorMiddleware can otherwise generate
+# an unhandled 500 response outside the CORS middleware, which makes the browser
+# report a misleading "No Access-Control-Allow-Origin header" error.
 app = FastAPI(title='RecoverAI API', version='1.5.0')
-
-# Keep the deployment origins explicit and also support Render/Vercel preview
-# deployments. The exception handler below ensures CORS headers are still
-# present when an endpoint raises an unexpected 500.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list(),
-    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\.(?:onrender\.com|vercel\.app)$',
-    allow_credentials=False,
-    allow_methods=['GET', 'POST', 'OPTIONS'],
-    allow_headers=['*'],
-)
 
 
 @app.exception_handler(Exception)
@@ -41,7 +34,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception('Unhandled API error on %s %s', request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={'detail': 'Internal server error', 'error_type': exc.__class__.__name__},
+        content={
+            'detail': 'Internal server error',
+            'error_type': exc.__class__.__name__,
+            'path': request.url.path,
+        },
     )
 
 
@@ -64,3 +61,16 @@ def read_root():
         'execution_mode': 'razorpay_test_mode' if settings.ENABLE_RAZORPAY_TEST_ACTIONS else 'simulation',
         'version': '1.5.0',
     }
+
+
+# IMPORTANT: wrap the complete ASGI application, including FastAPI's error
+# handling and every router, so CORS headers are present on successful,
+# handled-error, and unhandled-500 responses alike.
+app = CORSMiddleware(
+    app=app,
+    allow_origins=settings.cors_origin_list(),
+    allow_origin_regex=r'^https://[a-zA-Z0-9.-]+\.(?:onrender\.com|vercel\.app)$',
+    allow_credentials=False,
+    allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allow_headers=['*'],
+)
