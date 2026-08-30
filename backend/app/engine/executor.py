@@ -4,7 +4,7 @@ import time
 import urllib.request
 import urllib.error
 from ..config import settings
-from ..models import ActionType
+from ..models import ActionType, ExecutionRecord
 from .idempotency import idempotency_manager
 
 
@@ -46,40 +46,62 @@ class RecoveryExecutor:
 
     def execute(self, db, case: dict, policy_decision: str, action: str, policy_decision_id: str = ''):
         # A human reviewer approval is an explicit authorization transition.
-        # It is not a new policy decision and must reuse the existing idempotent
-        # execution record created while the case was awaiting review.
+        # It is not a new policy decision and must reuse the existing execution
+        # record created while the case was awaiting review.
         if policy_decision == 'human_approved':
             policy_decision = 'allow'
         if policy_decision not in {'allow', 'human_review'}:
             return {'status': 'BLOCKED', 'result_details': {'reason': f'Policy: {policy_decision}'}}
         if action not in {a.value for a in ActionType}:
             return {'status': 'BLOCKED', 'result_details': {'reason': 'Unsupported action'}}
-        key = idempotency_manager.make_key(case, action)
-        existing = idempotency_manager.check_and_record(db, key, action, policy_decision_id)
-        if existing is None:
-            return {'status': 'ERROR', 'result_details': {'reason': 'Could not create execution record'}}
+
+        existing = None
+        execution_id = case.get('_execution_id')
+        if execution_id:
+            existing = db.query(ExecutionRecord).filter(ExecutionRecord.id == str(execution_id)).first()
+            if existing is None:
+                return {'status': 'ERROR', 'result_details': {'reason': 'Execution record no longer exists'}}
+            if existing.action.value != action:
+                return {'status': 'BLOCKED', 'result_details': {'reason': 'Execution action mismatch'}}
+        else:
+            key = idempotency_manager.make_key(case, action)
+            existing = idempotency_manager.check_and_record(db, key, action, policy_decision_id)
+            if existing is None:
+                return {'status': 'ERROR', 'result_details': {'reason': 'Could not create execution record'}}
+
         if existing.status not in {'PENDING', 'PENDING_HUMAN_REVIEW'}:
-            return {'status': existing.status, 'result_details': existing.result_details or {}, 'idempotent_replay': True}
+            return {'status': existing.status, 'result_details': existing.result_details or {}, 'idempotent_replay': True, 'idempotency_key': existing.idempotency_key}
         if existing.status == 'PENDING_HUMAN_REVIEW' and policy_decision == 'allow':
             existing.status = 'PENDING'
             db.flush()
 
         if policy_decision == 'human_review' or action == ActionType.HUMAN_ESCALATION.value:
-            status = 'PENDING_HUMAN_REVIEW'; details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Policy requires compliant human escalation'}
+            if policy_decision == 'allow' and case.get('_human_approved'):
+                status = 'HUMAN_REVIEW_APPROVED'
+                details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Merchant approved the human-escalation decision'}
+            else:
+                status = 'PENDING_HUMAN_REVIEW'
+                details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Policy requires compliant human escalation'}
         elif action == ActionType.STOP.value:
-            status = 'STOPPED'; details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Recovery stopped by policy'}
+            status = 'STOPPED'
+            details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Recovery stopped by policy'}
         elif action == ActionType.WAIT.value:
-            status = 'WAITING'; details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Recovery deferred by policy'}
+            status = 'WAITING'
+            details = {'mode': 'CONTROLLED_WORKFLOW', 'action': action, 'reason': 'Recovery deferred by policy'}
         elif action == ActionType.PAYMENT_LINK.value:
-            details = self._create_test_payment_link(case); status = 'RECOVERY_ACTION_READY' if details.get('short_url') is None else 'RECOVERY_LINK_CREATED'
+            details = self._create_test_payment_link(case)
+            status = 'RECOVERY_LINK_CREATED' if details.get('short_url') else 'RECOVERY_ACTION_READY'
         elif case.get('is_recoverable') is False:
-            status = 'NO_RECOVERY'; details = {'mode': 'SIMULATION', 'action': action, 'reason': 'Uploaded dataset ground truth marks this row non-recoverable'}
+            status = 'NO_RECOVERY'
+            details = {'mode': 'SIMULATION', 'action': action, 'reason': 'Uploaded dataset ground truth marks this row non-recoverable'}
         else:
-            status = 'RECOVERED'; details = {'mode': 'SIMULATION', 'action': action, 'amount': float(case.get('amount', 0) or 0), 'recovered_amount': float(case.get('amount', 0) or 0), 'execution_boundary': 'No real-money movement'}
+            status = 'RECOVERED'
+            details = {'mode': 'SIMULATION', 'action': action, 'amount': float(case.get('amount', 0) or 0), 'recovered_amount': float(case.get('amount', 0) or 0), 'execution_boundary': 'No real-money movement'}
+
         existing.status = status
         existing.result_details = {**(existing.result_details or {}), **details}
         db.commit()
-        return {'status': status, 'result_details': existing.result_details, 'idempotency_key': key}
+        return {'status': status, 'result_details': existing.result_details, 'idempotency_key': existing.idempotency_key}
 
 
 executor = RecoveryExecutor()
