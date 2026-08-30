@@ -3,13 +3,15 @@ from statistics import mean, pstdev
 from .baseline import run_baseline
 from .recoverai import run_recoverai
 from .generate_dataset import generate_dataset
+from ..ml_model import ml_model
 
 
-BENCHMARK_VERSION = 'channel-aware-v3'
+BENCHMARK_VERSION = 'channel-aware-v4-heldout'
 DEFAULT_SEEDS = [42, 123, 456, 789, 2026]
+TRAIN_SEED_OFFSET = 1_000_003
 
 
-def _score_dataset(dataset, *, seed=None, source='synthetic'):
+def _score_dataset(dataset, *, seed=None, source='synthetic', training_size=None):
     dataset_size = len(dataset)
     base = run_baseline(dataset)
     rec = run_recoverai(dataset)
@@ -20,6 +22,8 @@ def _score_dataset(dataset, *, seed=None, source='synthetic'):
         'benchmark_version': BENCHMARK_VERSION,
         'dataset_source': source,
         'dataset_size': dataset_size,
+        'training_dataset_size': training_size,
+        'evaluation_protocol': 'model trained on an independent synthetic cohort and scored on this held-out cohort' if training_size else 'descriptive uploaded-dataset evaluation',
         'seed': seed,
         'baseline': base,
         'recoverai': rec,
@@ -36,12 +40,20 @@ def _score_dataset(dataset, *, seed=None, source='synthetic'):
 
 
 def run_evaluation(dataset_size: int = 10000, seed: int = 42):
-    dataset = generate_dataset(dataset_size, seed=seed)
-    return _score_dataset(dataset, seed=seed, source='synthetic')
+    if dataset_size < 100:
+        raise ValueError('Evaluation cohort must contain at least 100 rows.')
+    # Critical benchmark rule: never fit the ML model on the cohort whose
+    # recovery value is being reported. This makes the money-recovery result
+    # a genuine held-out evaluation instead of an in-sample estimate.
+    training_size = max(1000, dataset_size)
+    training = generate_dataset(training_size, seed=seed + TRAIN_SEED_OFFSET)
+    evaluation = generate_dataset(dataset_size, seed=seed)
+    ml_model.fit(training)
+    return _score_dataset(evaluation, seed=seed, source='synthetic_heldout', training_size=training_size)
 
 
 def run_dataset_evaluation(dataset):
-    return _score_dataset(dataset, seed=None, source='uploaded_csv')
+    return _score_dataset(dataset, seed=None, source='uploaded_csv', training_size=None)
 
 
 def run_multi_seed_evaluation(dataset_size: int = 10000, seeds=None):
@@ -61,8 +73,10 @@ def run_multi_seed_evaluation(dataset_size: int = 10000, seeds=None):
 
     return {
         'benchmark_version': BENCHMARK_VERSION,
-        'dataset_source': 'synthetic_multi_seed',
+        'dataset_source': 'synthetic_multi_seed_heldout',
         'dataset_size_per_run': dataset_size,
+        'training_dataset_size_per_run': max(1000, dataset_size),
+        'evaluation_protocol': 'independent training cohort per seed; all reported recovery outcomes come from the held-out evaluation cohort',
         'seeds': seeds,
         'runs': runs,
         'aggregate': {
