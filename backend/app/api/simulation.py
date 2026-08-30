@@ -13,8 +13,8 @@ router = APIRouter()
 RUNTIME_EVALUATION_LIMIT = 1000
 
 
-def _normalize_rows(payload: dict):
-    rows = payload.get('rows') if isinstance(payload, dict) else None
+def _normalize_rows(payload):
+    rows = payload if isinstance(payload, list) else (payload.get('rows') if isinstance(payload, dict) else None)
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail='Upload a non-empty dataset.')
     if len(rows) > 100000:
@@ -37,7 +37,13 @@ def _normalize_rows(payload: dict):
         if not payment_id or not failure_reason:
             raise HTTPException(status_code=400, detail=f'Row {index} must have payment_id and failure_reason.')
         raw_label = row['is_recoverable']
-        is_recoverable = raw_label if isinstance(raw_label, bool) else str(raw_label).strip().lower() in {'true', '1', 'yes', 'y'}
+        if isinstance(raw_label, bool):
+            is_recoverable = raw_label
+        else:
+            label = str(raw_label).strip().lower()
+            if label not in {'true', 'false', '1', '0', 'yes', 'no', 'y', 'n'}:
+                raise HTTPException(status_code=400, detail=f'Row {index} has invalid is_recoverable; use true/false.')
+            is_recoverable = label in {'true', '1', 'yes', 'y'}
         item = dict(row)
         item.update({'payment_id': payment_id, 'amount': amount, 'failure_reason': failure_reason, 'retry_count': retry_count, 'is_recoverable': is_recoverable})
         normalized.append(item)
