@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FlaskConical, SlidersHorizontal, Upload, Database, Info, CheckCircle2, AlertTriangle, Server, BarChart3 } from 'lucide-react'
 
 type Row = Record<string, string | number | boolean>
 type Result = { records: number; revenueAtRisk: number; baselineRecovered: number; aiRecovered: number; recoveryRate: number; incremental: number; policy: { allow: number; review: number; stop: number }; trainingSize?: number; protocol?: string; source?: 'backend' | 'offline'; aggregate?: { runs: number; totalTransactions: number; incrementalMean: number; incrementalStddev: number; improvementMean: number; improvementStddev: number; recoveraiRateMean: number; baselineRateMean: number; humanReviewMean: number; unsafeBlockMean: number } }
 
 const API = import.meta.env.VITE_API_URL || '/api'
+const STORAGE_KEY = 'recoverai.simulation.v2'
 const money = (v: number) => `₹${Math.round(v || 0).toLocaleString('en-IN')}`
 const pct = (v: number) => `${(v || 0).toFixed(1)}%`
 
@@ -61,6 +62,28 @@ export default function SimulationSafe() {
   const [result, setResult] = useState<Result | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (!saved) return
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed.rows)) setRows(parsed.rows)
+      if (parsed.result && typeof parsed.result === 'object') setResult(parsed.result)
+      if (Number.isFinite(parsed.size)) setSize(Math.max(100, Math.min(100000, Number(parsed.size))))
+      setMessage('Restored the previous Simulation Lab session.')
+    } catch {
+      localStorage.removeItem(STORAGE_KEY)
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, savedAt: new Date().toISOString(), size, rows, result }))
+    } catch {
+      // Large datasets may exceed browser storage; the current in-memory session still works.
+    }
+  }, [size, rows, result])
 
   const displayResult = useMemo(() => result, [result])
   const mapRun = (raw: any): Result => {
