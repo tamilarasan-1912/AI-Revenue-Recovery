@@ -22,13 +22,26 @@ def _reason(value: Any) -> str:
     return str(value or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
 
 
+def _as_bool(value: Any) -> bool:
+    """Parse common CSV/API boolean representations without Python truthiness traps."""
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "on"}
+
+
 def build_recovery_plan(payment: dict[str, Any], *, max_retries: int = 3, retry_delays_hours: tuple[int, ...] = DEFAULT_RETRY_DELAYS_HOURS, rescue_window_days: int = DEFAULT_RESCUE_WINDOW_DAYS) -> dict[str, Any]:
     reason = _reason(payment.get("failure_reason"))
     decline_code = _reason(payment.get("decline_code"))
     error_source = _reason(payment.get("error_source"))
-    authentication_required = bool(payment.get("authentication_required"))
+    authentication_required = _as_bool(payment.get("authentication_required"))
     retries = max(0, int(payment.get("retry_count", 0) or 0))
-    fraud = bool(payment.get("fraud_signal")) or "fraud" in reason or "fraud" in decline_code
+    max_retries = max(0, int(max_retries))
+    rescue_window_days = max(0, int(rescue_window_days))
+    fraud = _as_bool(payment.get("fraud_signal")) or "fraud" in reason or "fraud" in decline_code
     ml_probability = payment.get("ml_recoverability")
     p = None if ml_probability is None else max(0.0, min(1.0, float(ml_probability)))
 
