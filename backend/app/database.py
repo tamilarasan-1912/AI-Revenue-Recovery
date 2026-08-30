@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
+from .runtime_dataset import get_dataset
 
 
 class Base(DeclarativeBase):
@@ -28,10 +29,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 _fallback_engine = None
 _FallbackSessionLocal = None
+_demo_engine = None
+_DemoSessionLocal = None
 
 
 def _get_fallback_sessionmaker():
-    """Explicit local-demo fallback; never silently replace production Postgres."""
+    """Explicit persistent local-demo fallback; never silently replaces production Postgres."""
     global _fallback_engine, _FallbackSessionLocal
     if not settings.ALLOW_SQLITE_FALLBACK:
         raise RuntimeError('Primary database is unavailable and ALLOW_SQLITE_FALLBACK is disabled')
@@ -46,6 +49,20 @@ def _get_fallback_sessionmaker():
     return _FallbackSessionLocal
 
 
+def _get_demo_sessionmaker():
+    """Process-local SQLite used only for an uploaded-CSV demo when Postgres is unavailable."""
+    global _demo_engine, _DemoSessionLocal
+    if _DemoSessionLocal is None:
+        _demo_engine = create_engine(
+            'sqlite:///:memory:',
+            connect_args={'check_same_thread': False},
+            pool_pre_ping=True,
+        )
+        Base.metadata.create_all(bind=_demo_engine)
+        _DemoSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_demo_engine)
+    return _DemoSessionLocal
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -54,6 +71,14 @@ def get_db():
     except Exception as exc:
         db.rollback()
         db.close()
+        batch_id, rows = get_dataset()
+        if rows:
+            demo_db = _get_demo_sessionmaker()()
+            try:
+                yield demo_db
+            finally:
+                demo_db.close()
+            return
         if not settings.ALLOW_SQLITE_FALLBACK:
             raise HTTPException(status_code=503, detail='Primary database is unavailable') from exc
         fallback_db = _get_fallback_sessionmaker()()
