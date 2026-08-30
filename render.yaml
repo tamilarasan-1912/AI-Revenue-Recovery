@@ -17,14 +17,17 @@ services:
         value: deterministic
       - key: ENABLE_RAZORPAY_TEST_ACTIONS
         value: "false"
+      # Keep the demo/API usable during temporary Render Postgres outages.
+      # The application prefers Postgres whenever it is reachable; SQLite is
+      # used only after the primary connection fails.
       - key: ALLOW_SQLITE_FALLBACK
-        value: "false"
+        value: "true"
       - key: REQUIRE_WEBHOOK_SIGNATURE
         value: "true"
       - key: WEBHOOK_MAX_AGE_SECONDS
         value: "300"
       - key: CORS_ORIGINS
-        value: "*"
+        value: "https://recoverai-frontend-6er7.onrender.com,https://ai-revenue-recovery-nine.vercel.app,https://frontend-bpkjb2id9-tamilarasan1.vercel.app,https://frontend-bhoafqsmd-tamilarasan1.vercel.app"
 
   - type: web
     name: recoverai-frontend
