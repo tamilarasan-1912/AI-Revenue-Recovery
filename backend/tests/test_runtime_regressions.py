@@ -32,6 +32,23 @@ def test_dataset_review_case_does_not_use_removed_ml_model_attribute():
         db.close()
 
 
+def test_dataset_review_case_returns_the_persisted_execution_id():
+    db = make_db()
+    try:
+        db.add(ImportedDatasetRow(
+            id='row-exec-id', batch_id='exec-id-batch', row_number=1,
+            payment_id='exec-id-pay', amount=1499,
+            failure_reason='bank_timeout', retry_count=0, is_recoverable=True,
+        ))
+        db.commit()
+        result = create_dataset_review_case(None, db)
+        persisted = db.query(ExecutionRecord).filter(ExecutionRecord.id == result['execution_id']).first()
+        assert persisted is not None
+        assert persisted.policy_decision_id is not None
+    finally:
+        db.close()
+
+
 def test_database_evaluation_returns_stable_policy_keys():
     db = make_db()
     try:
