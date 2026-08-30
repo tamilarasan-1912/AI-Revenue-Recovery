@@ -41,8 +41,9 @@ def evaluate_database_payments(db, limit: int = 1000, batch_id: str | None = Non
     safe_limit = max(1, min(int(limit), 1000))
     rows = db.query(ImportedDatasetRow).filter(ImportedDatasetRow.batch_id == active_batch).order_by(ImportedDatasetRow.row_number.asc()).limit(safe_limit).all()
     dataset_rows = [_row_payload(r) for r in rows]
-    if dataset_rows and (ml_model.classifier is None or ml_model.training_rows != len(dataset_rows)):
-        ml_model.fit(dataset_rows)
+    training_key = f'uploaded_batch:{active_batch}'
+    if dataset_rows and (ml_model.classifier is None or ml_model.training_rows != len(dataset_rows) or ml_model.training_key != training_key):
+        ml_model.fit(dataset_rows, training_key=training_key)
     predictions = ml_model.predict_many(dataset_rows)
 
     results, action_counts, recovery_stages = [], {}, {}
