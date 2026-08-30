@@ -1,6 +1,7 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 from .config import settings
 from .database import engine, Base
@@ -18,15 +19,13 @@ try:
             else:
                 conn.execute(text('ALTER TABLE imported_dataset_rows ADD COLUMN features JSON'))
 except Exception:
-    # Keep the process bootable so the readiness endpoint can expose the real
-    # database failure. Production never silently switches to another store.
     logger.exception('Database initialization failed; API will report degraded readiness')
 
 app = FastAPI(title='RecoverAI API', version='1.5.0')
 
-# The deployed frontend is hosted on Render. Keep an explicit allow-list from
-# configuration, and also allow the app's Render/Vercel deployment origins so
-# a stale CORS_ORIGINS environment variable cannot break the browser demo.
+# Keep the deployment origins explicit and also support Render/Vercel preview
+# deployments. The exception handler below ensures CORS headers are still
+# present when an endpoint raises an unexpected 500.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),
@@ -35,6 +34,16 @@ app.add_middleware(
     allow_methods=['GET', 'POST', 'OPTIONS'],
     allow_headers=['*'],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception('Unhandled API error on %s %s', request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={'detail': 'Internal server error', 'error_type': exc.__class__.__name__},
+    )
+
 
 app.include_router(webhooks.router, prefix='/api/webhooks')
 app.include_router(analytics.router, prefix='/api/analytics')
