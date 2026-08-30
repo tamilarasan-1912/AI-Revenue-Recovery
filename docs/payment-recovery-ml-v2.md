@@ -33,15 +33,17 @@ The training payload supports payment and customer-history signals such as:
 
 These fields allow the model to learn patterns such as customers who usually pay after a reminder, repeated temporary failures, or high retry pressure.
 
-## Training
+## Training and validation
 
-The uploaded CSV remains the supervised source. `is_recoverable` is the classification target and is never included as an input feature.
+The uploaded CSV is the supervised source for labelled evaluation data. `is_recoverable` is the classification target and is never included as an input feature.
 
-The classifier uses `RandomForestClassifier` and the expected-recovery estimator uses `RandomForestRegressor`. Categorical values are encoded through `DictVectorizer`, allowing older datasets with the original four required columns to continue working.
+The classifier uses `RandomForestClassifier` and the expected-recovery estimator uses `RandomForestRegressor`. Categorical values are encoded through `DictVectorizer`, allowing older datasets with the original required columns to continue working.
 
 If a dataset contains `recovered_amount` or `recovery_rate`, those values are used to train the recovery-amount estimator. When only the binary recoverability label exists, the estimator uses a transparent proxy of `amount` for recoverable rows and `0` otherwise; this should be treated as an expected-value proxy until real transaction-level recovery outcomes are collected.
 
-For datasets with at least 30 rows and both classes, the API reports held-out accuracy and ROC-AUC for the classifier. No fabricated validation score is returned for smaller or one-class datasets.
+For datasets with at least 30 rows and both classes, the API reports held-out **accuracy, precision, recall, F1 and ROC-AUC**. No fabricated validation score is returned for smaller or one-class datasets.
+
+The buildathon benchmark goes one step further: the model is trained on an independent synthetic cohort and the money-recovery result is scored on a separate held-out cohort. This prevents training-set leakage from inflating the reported recovery lift.
 
 ## Recovery decision logic
 
@@ -80,7 +82,7 @@ Example payload:
 }
 ```
 
-The response contains both the ML prediction and the final policy-guided recovery plan.
+The response contains both the ML prediction and the policy-guided recovery plan.
 
 For batch scoring use `POST /api/simulation/predict-batch` with `{ "rows": [...] }`.
 
@@ -90,7 +92,7 @@ The intended production flow is:
 
 `payment event → feature aggregation → ML score → policy decision → recovery action → actual outcome → training dataset → periodic retraining`
 
-The current service retrains from uploaded datasets. A production implementation should persist retry timestamps, retry outcomes, customer-action outcomes, and recovered amounts so that the next model version can learn **time-to-recovery** and **best-action** directly instead of relying on fixed policy intervals.
+The current service retrains from uploaded labelled datasets. A production implementation should persist retry timestamps, retry outcomes, customer-action outcomes, and recovered amounts so that the next model version can learn **time-to-recovery** and **best-action** directly instead of relying on fixed policy intervals.
 
 ## Research basis
 
