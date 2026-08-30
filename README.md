@@ -4,7 +4,7 @@
 
 > **Detect revenue at risk → score recoverability → diagnose the failure → recommend a recovery strategy → enforce deterministic policy → execute safely → reconcile the outcome → measure recovered revenue → audit the decision.**
 
-Built for the Razorpay AI Buildathon **Track 03 — AI Revenue Recovery**, the project focuses on the part that matters after a payment fails: recovering legitimate revenue without blindly retrying, over-contacting customers, or giving an AI model direct execution authority.
+The project focuses on the part that matters after a payment fails: recovering legitimate revenue without blindly retrying, over-contacting customers, or giving an AI model direct execution authority.
 
 [![Backend Tests](https://github.com/tamilarasan-1912/AI-Revenue-Recovery/actions/workflows/backend-tests.yml/badge.svg)](https://github.com/tamilarasan-1912/AI-Revenue-Recovery/actions/workflows/backend-tests.yml)
 [![CI](https://github.com/tamilarasan-1912/AI-Revenue-Recovery/actions/workflows/ci.yml/badge.svg)](https://github.com/tamilarasan-1912/AI-Revenue-Recovery/actions/workflows/ci.yml)
