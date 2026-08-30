@@ -165,9 +165,22 @@ def pending_reviews(db: Session = Depends(get_db)):
     active_rows = _active_batch_rows(db)
     active_batch = active_rows[0].batch_id if active_rows else None
     query = db.query(ExecutionRecord).filter(ExecutionRecord.status == 'PENDING_HUMAN_REVIEW')
+    all_pending = query.order_by(ExecutionRecord.created_at.asc()).all()
+
+    # The queue must reflect the same active cohort as the dashboard/audit log.  Older
+    # versions filtered exclusively on the synthetic `review:<batch>:...` idempotency
+    # prefix, which hid legitimate PENDING_HUMAN_REVIEW records created by /review/demo
+    # (their idempotency key is `recover:...`).  Keep active-batch materialized cases and
+    # dataset cases from the same cohort, while excluding unrelated historical records.
     if active_batch:
-        query = query.filter(ExecutionRecord.idempotency_key.like(f'review:{active_batch}:%'))
-    rows = query.order_by(ExecutionRecord.created_at.asc()).all()
+        rows = [
+            row for row in all_pending
+            if (row.idempotency_key or '').startswith(f'review:{active_batch}:')
+            or (row.result_details or {}).get('source_batch') == active_batch
+        ]
+    else:
+        rows = []
+
     result = []
     for row in rows:
         try:
