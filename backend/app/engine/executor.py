@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 import urllib.request
 import urllib.error
 from ..config import settings
@@ -19,13 +20,27 @@ class RecoveryExecutor:
         amount = int(round(float(case.get('amount', 0) or 0) * 100))
         if amount <= 0:
             return {'mode': 'BLOCKED', 'action': 'PAYMENT_LINK', 'execution_boundary': 'Invalid recovery amount'}
-        payload = {'amount': amount, 'currency': 'INR', 'accept_partial': False, 'description': f"RecoverAI recovery for {case.get('payment_id', 'payment')}", 'reference_id': case.get('case_id', case.get('payment_id', 'recoverai'))}
+        reference_id = str(case.get('case_id') or case.get('payment_id') or 'recoverai')[:40]
+        payload = {
+            'amount': amount,
+            'currency': 'INR',
+            'accept_partial': False,
+            'description': f"RecoverAI recovery for {case.get('payment_id', 'payment')}",
+            'reference_id': reference_id,
+            'expire_by': int(time.time()) + 30 * 24 * 60 * 60,
+            'notify': {'sms': False, 'email': False},
+        }
+        customer = {}
+        if case.get('customer_name'): customer['name'] = str(case['customer_name'])[:120]
+        if case.get('customer_email'): customer['email'] = str(case['customer_email'])[:120]
+        if case.get('customer_contact'): customer['contact'] = str(case['customer_contact'])[:20]
+        if customer: payload['customer'] = customer
         token = base64.b64encode(f'{settings.RAZORPAY_KEY_ID}:{settings.RAZORPAY_KEY_SECRET}'.encode()).decode()
         request = urllib.request.Request('https://api.razorpay.com/v1/payment_links', data=json.dumps(payload).encode(), headers={'Authorization': f'Basic {token}', 'Content-Type': 'application/json'}, method='POST')
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 body = json.loads(response.read().decode())
-            return {'mode': 'RAZORPAY_TEST_MODE', 'action': 'PAYMENT_LINK', 'payment_link_id': body.get('id'), 'short_url': body.get('short_url'), 'execution_boundary': 'Razorpay Test Mode only'}
+            return {'mode': 'RAZORPAY_TEST_MODE', 'action': 'PAYMENT_LINK', 'payment_link_id': body.get('id'), 'short_url': body.get('short_url'), 'reference_id': reference_id, 'execution_boundary': 'Razorpay Test Mode only'}
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
             return {'mode': 'RAZORPAY_TEST_MODE', 'action': 'PAYMENT_LINK', 'execution_boundary': 'External action failed safely', 'error': str(exc)}
 
