@@ -121,7 +121,7 @@ npm run build
 
 ## Production deployment
 
-The repository includes a Render Blueprint (`render.yaml`) that provisions the backend and a managed Postgres database, with `/api/system/health` configured as the HTTP readiness check. The Vercel frontend proxies `/api/*` to the backend service.
+The repository includes a Render Blueprint (`render.yaml`) that provisions the backend, managed Postgres database, and a static frontend. The backend exposes `/api/system/health` as the HTTP readiness check, and the static frontend receives the backend's public URL at build time. This provides a deployment path independent of Vercel's build limits. Vercel remains supported when its deployment quota is available.
 
 Set these production secrets/environment variables in the deployment platform:
 
