@@ -24,6 +24,23 @@ services:
       - key: CORS_ORIGINS
         value: "*"
 
+  - type: web
+    name: recoverai-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: recoverai-api
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
 databases:
   - name: recoverai-db
     databaseName: recoverai
