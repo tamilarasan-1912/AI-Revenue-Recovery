@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
@@ -50,11 +51,11 @@ def get_db():
     try:
         db.execute(text('SELECT 1'))
         yield db
-    except Exception:
+    except Exception as exc:
         db.rollback()
         db.close()
         if not settings.ALLOW_SQLITE_FALLBACK:
-            raise
+            raise HTTPException(status_code=503, detail='Primary database is unavailable') from exc
         fallback_db = _get_fallback_sessionmaker()()
         try:
             yield fallback_db
