@@ -7,6 +7,29 @@ import './industry-fixes.css'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
+// Render free services can briefly return 502/503/504 while a sleeping service
+// or database connection wakes up. Retry idempotent GET requests so a cold start
+// does not surface as a false application failure. POST requests are never
+// retried here because they may perform a recovery action.
+const nativeFetch = window.fetch.bind(window)
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const method = String(init?.method || 'GET').toUpperCase()
+  const retryable = method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+  if (!retryable) return nativeFetch(input, init)
+  let lastResponse: Response | null = null
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const response = await nativeFetch(input, init)
+      lastResponse = response
+      if (![502, 503, 504].includes(response.status) || attempt === 3) return response
+    } catch (error) {
+      if (attempt === 3) throw error
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 700 * (attempt + 1)))
+  }
+  return lastResponse as Response
+}
+
 type AuditEvent = {
   event_id?: string
   payment_id?: string
@@ -58,7 +81,7 @@ function AuditRecoveryPage() {
           <div className="text-xs font-semibold text-[#656a73]">Automated Intelligence</div>
         </div>
         <div className="flex items-center gap-4 text-sm font-semibold">
-          <span>Recovery Control</span><span>Simulation Lab</span><span className="rounded border px-3 py-1.5">Test Mode</span>
+          <span>Recovery Control</span><span>Simulation Lab</span><span className="rounded border px-3 py-1.5">Simulation</span>
         </div>
       </header>
       <main className="mx-auto max-w-[1500px] p-5 lg:p-8">
