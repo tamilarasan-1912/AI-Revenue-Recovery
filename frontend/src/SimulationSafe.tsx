@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
-import { Download, FlaskConical, SlidersHorizontal, Upload, Database, Info, CheckCircle2, AlertTriangle, Server } from 'lucide-react'
+import { Download, FlaskConical, SlidersHorizontal, Upload, Database, Info, CheckCircle2, AlertTriangle, Server, BarChart3 } from 'lucide-react'
 
 type Row = Record<string, string | number | boolean>
-type Result = { records: number; revenueAtRisk: number; baselineRecovered: number; aiRecovered: number; recoveryRate: number; incremental: number; policy: { allow: number; review: number; stop: number }; trainingSize?: number; protocol?: string; source?: 'backend' | 'offline' }
+type Result = { records: number; revenueAtRisk: number; baselineRecovered: number; aiRecovered: number; recoveryRate: number; incremental: number; policy: { allow: number; review: number; stop: number }; trainingSize?: number; protocol?: string; source?: 'backend' | 'offline'; aggregate?: { runs: number; totalTransactions: number; incrementalMean: number; incrementalStddev: number; improvementMean: number; improvementStddev: number; recoveraiRateMean: number; baselineRateMean: number; humanReviewMean: number; unsafeBlockMean: number } }
 
 const API = import.meta.env.VITE_API_URL || '/api'
 const money = (v: number) => `₹${Math.round(v || 0).toLocaleString('en-IN')}`
@@ -63,29 +63,34 @@ export default function SimulationSafe() {
   const [busy, setBusy] = useState(false)
 
   const displayResult = useMemo(() => result, [result])
+  const mapRun = (raw: any): Result => ({
+    records: Number(raw.dataset_size || 0), revenueAtRisk: Number(raw.revenue_at_risk || 0), baselineRecovered: Number(raw.baseline?.revenue_recovered || 0), aiRecovered: Number(raw.recoverai?.revenue_recovered || 0), recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0), incremental: Number(raw.incremental_revenue || 0),
+    policy: { allow: Number(raw.recoverai?.action_counts?.RETRY || 0) + Number(raw.recoverai?.action_counts?.PAYMENT_LINK || 0), review: Number(raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) }, trainingSize: Number(raw.training_dataset_size || 0), protocol: raw.evaluation_protocol, source: 'backend',
+  })
   const runBenchmark = async () => {
     setBusy(true); setMessage('Running the held-out ML benchmark…')
     try {
       const response = await fetch(`${API}/simulation/run-benchmark?dataset_size=${size}&seed=42`, { method: 'POST', headers: { Accept: 'application/json' } })
       const raw = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error((raw as any)?.detail || `Benchmark request failed (${response.status})`)
-      setResult({
-        records: Number(raw.dataset_size || 0),
-        revenueAtRisk: Number(raw.revenue_at_risk || 0),
-        baselineRecovered: Number(raw.baseline?.revenue_recovered || 0),
-        aiRecovered: Number(raw.recoverai?.revenue_recovered || 0),
-        recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0),
-        incremental: Number(raw.incremental_revenue || 0),
-        policy: { allow: Number(raw.recoverai?.policy_decisions?.ALLOW || 0), review: Number(raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) },
-        trainingSize: Number(raw.training_dataset_size || 0),
-        protocol: raw.evaluation_protocol,
-        source: 'backend',
-      })
-      setMessage('Held-out ML benchmark completed by the RecoverAI backend.')
+      setResult(mapRun(raw)); setMessage('Held-out ML benchmark completed by the RecoverAI backend.')
     } catch (e) {
-      setResult(evaluate(syntheticRows(size)))
-      setMessage(`Backend benchmark unavailable. Showing the isolated offline fallback instead: ${e instanceof Error ? e.message : 'request failed'}`)
+      setResult(evaluate(syntheticRows(size))); setMessage(`Backend benchmark unavailable. Showing the isolated offline fallback instead: ${e instanceof Error ? e.message : 'request failed'}`)
     } finally { setBusy(false) }
+  }
+  const runEvidence = async () => {
+    setBusy(true); setMessage('Running five independent held-out seeds. This is the evidence run for the buildathon.')
+    try {
+      const response = await fetch(`${API}/simulation/run-multi-seed?dataset_size=${size}&seeds=42,123,456,789,2026`, { method: 'POST', headers: { Accept: 'application/json' } })
+      const raw = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error((raw as any)?.detail || `Evidence request failed (${response.status})`)
+      const first = raw.runs?.[0]
+      if (!first) throw new Error('Evidence endpoint returned no runs')
+      const aggregate = raw.aggregate || {}
+      setResult({ ...mapRun(first), aggregate: { runs: Number(aggregate.runs || 0), totalTransactions: Number(aggregate.total_transactions_evaluated || 0), incrementalMean: Number(aggregate.incremental_revenue_mean || 0), incrementalStddev: Number(aggregate.incremental_revenue_stddev || 0), improvementMean: Number(aggregate.improvement_percentage_mean || 0), improvementStddev: Number(aggregate.improvement_percentage_stddev || 0), recoveraiRateMean: Number(aggregate.recoverai_revenue_recovery_rate_mean || 0), baselineRateMean: Number(aggregate.baseline_revenue_recovery_rate_mean || 0), humanReviewMean: Number(aggregate.human_review_rate_mean || 0), unsafeBlockMean: Number(aggregate.unsafe_block_rate_mean || 0) } })
+      setMessage('Five-seed held-out evidence completed. Report the aggregate mean ± standard deviation, not a cherry-picked seed.')
+    } catch (e) { setMessage(`Evidence run unavailable: ${e instanceof Error ? e.message : 'request failed'}`) }
+    finally { setBusy(false) }
   }
   const evaluateDataset = () => {
     if (!rows.length) { setMessage('Upload a CSV dataset first.'); return }
@@ -112,7 +117,7 @@ export default function SimulationSafe() {
       <div style={{ display: 'flex', gap: 24, alignItems: 'center', fontSize: 14, fontWeight: 700 }}><a href="/recovery" style={{ color: '#17191d', textDecoration: 'none' }}>Recovery Control</a><span>Simulation Lab</span><span style={{ border: '1px solid #c7cbd1', padding: '7px 10px', borderRadius: 5 }}>Test Mode</span></div>
     </header>
     <main style={{ maxWidth: 1180, margin: '0 auto', padding: '34px 24px 60px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'flex-start', marginBottom: 20 }}><div><h1 style={{ margin: 0, fontSize: 34 }}>Simulation Lab</h1><p style={{ color: '#656a73', marginTop: 8 }}>Prove recovery performance using controlled, reproducible payment cohorts.</p></div><button onClick={exportReport} style={{ ...button, background: '#111', color: '#fff', borderColor: '#111', display: 'flex', gap: 8, alignItems: 'center' }}><Download size={16}/> Export Report</button></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20, alignItems: 'flex-start', marginBottom: 20 }}><div><h1 style={{ margin: 0, fontSize: 34 }}>Simulation Lab</h1><p style={{ color: '#656a73', marginTop: 8 }}>Prove recovery performance using controlled, reproducible payment cohorts.</p></div><div style={{ display: 'flex', gap: 8 }}><button onClick={() => void runEvidence()} disabled={busy} style={{ ...button, background: '#0058be', color: '#fff', borderColor: '#0058be', display: 'flex', gap: 8, alignItems: 'center' }}><BarChart3 size={16}/> 5-Seed Evidence</button><button onClick={exportReport} style={{ ...button, background: '#111', color: '#fff', borderColor: '#111', display: 'flex', gap: 8, alignItems: 'center' }}><Download size={16}/> Export Report</button></div></div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#45464d', fontSize: 13, marginBottom: 24 }}><Info size={16} color="#0058be"/> Synthetic / simulated evidence — no real-money movement.</div>
       {message && <div style={{ marginBottom: 18, padding: 12, borderRadius: 7, background: '#eef5ff', border: '1px solid #bfd7ff', display: 'flex', gap: 8, alignItems: 'center' }}><Info size={16}/>{message}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 18 }}>
@@ -124,6 +129,7 @@ export default function SimulationSafe() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginTop: 24 }}>
           {[['Revenue at Risk', money(displayResult.revenueAtRisk)], ['Baseline Recovered', money(displayResult.baselineRecovered)], ['RecoverAI Recovered', money(displayResult.aiRecovered)], ['Recovery Rate', pct(displayResult.recoveryRate)], ['Incremental Revenue', `+${money(displayResult.incremental)}`]].map(([label, value]) => <section key={label} style={card}><div style={{ fontSize: 11, color: '#656a73', fontWeight: 800, textTransform: 'uppercase' }}>{label}</div><div style={{ fontSize: 25, fontWeight: 900, marginTop: 7 }}>{value}</div></section>)}
         </div>
+        {displayResult.aggregate && <section style={{ ...card, marginTop: 18 }}><h2 style={{ fontSize: 18, marginTop: 0 }}>Five-Seed Evidence Aggregate</h2><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12, fontSize: 13 }}><div><b>Runs</b><div>{displayResult.aggregate.runs}</div></div><div><b>Transactions</b><div>{displayResult.aggregate.totalTransactions.toLocaleString()}</div></div><div><b>Incremental Revenue</b><div>{money(displayResult.aggregate.incrementalMean)} ± {money(displayResult.aggregate.incrementalStddev)}</div></div><div><b>Improvement</b><div>{pct(displayResult.aggregate.improvementMean)} ± {pct(displayResult.aggregate.improvementStddev)}</div></div><div><b>RecoverAI Recovery</b><div>{pct(displayResult.aggregate.recoveraiRateMean)}</div></div><div><b>Baseline Recovery</b><div>{pct(displayResult.aggregate.baselineRateMean)}</div></div><div><b>Human Review</b><div>{pct(displayResult.aggregate.humanReviewMean)}</div></div><div><b>Unsafe Block</b><div>{pct(displayResult.aggregate.unsafeBlockMean)}</div></div></div><p style={{ color: '#656a73', fontSize: 12, marginBottom: 0 }}>Report this aggregate mean ± standard deviation. Do not present a single seed as the headline result.</p></section>}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 18, marginTop: 18 }}>
           <section style={card}><h2 style={{ fontSize: 18, marginTop: 0 }}>Recovery Evidence</h2><div style={{ display: 'grid', gap: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Baseline recovery</span><b>{money(displayResult.baselineRecovered)}</b></div><div style={{ height: 10, background: '#e7e9ed', borderRadius: 20 }}><div style={{ width: `${Math.min(100, displayResult.baselineRecovered / Math.max(1, displayResult.revenueAtRisk) * 100)}%`, height: '100%', background: '#777b83', borderRadius: 20 }}/></div><div style={{ display: 'flex', justifyContent: 'space-between' }}><span>RecoverAI recovery</span><b>{money(displayResult.aiRecovered)}</b></div><div style={{ height: 10, background: '#e7e9ed', borderRadius: 20 }}><div style={{ width: `${Math.min(100, displayResult.aiRecovered / Math.max(1, displayResult.revenueAtRisk) * 100)}%`, height: '100%', background: '#287bea', borderRadius: 20 }}/></div></div></section>
           <section style={card}><h2 style={{ fontSize: 18, marginTop: 0 }}>Safety Matrix</h2><p><CheckCircle2 size={15} style={{ verticalAlign: 'middle' }}/> Auto-Allow <b style={{ float: 'right' }}>{displayResult.policy.allow.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Human Review <b style={{ float: 'right' }}>{displayResult.policy.review.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Auto-Stop <b style={{ float: 'right' }}>{displayResult.policy.stop.toLocaleString()}</b></p><p style={{ color: '#656a73', fontSize: 12 }}>{displayResult.records.toLocaleString()} simulations evaluated.</p>{displayResult.source === 'backend' && <p style={{ color: '#176b4c', fontSize: 12, fontWeight: 800 }}><Server size={14} style={{ verticalAlign: 'middle', marginRight: 5 }}/>Backend held-out evidence · training cohort {displayResult.trainingSize?.toLocaleString()}</p>}{displayResult.protocol && <p style={{ color: '#656a73', fontSize: 11 }}>{displayResult.protocol}</p>}</section>
