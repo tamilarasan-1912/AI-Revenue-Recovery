@@ -1,11 +1,12 @@
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Payment, PaymentStatus, RecoveryCase, PolicyDecisionRecord, AuditLog
+from ..models import Payment, PaymentStatus, RecoveryCase, PolicyDecisionRecord, ExecutionRecord, AuditLog
 from ..engine.policy_engine import policy_engine
 from ..engine.executor import executor
 from ..agents.risk_agent import analyze_risk
@@ -22,13 +23,26 @@ def _payment_entity(event: dict) -> dict:
     return event.get('entity') or event.get('payload', {}).get('payment', {}).get('entity') or {}
 
 
+def _created_at_is_fresh(event: dict) -> bool:
+    created_at = event.get('created_at')
+    if created_at in (None, '') or settings.WEBHOOK_MAX_AGE_SECONDS <= 0:
+        return True
+    try:
+        age = int(time.time()) - int(created_at)
+    except (TypeError, ValueError):
+        return False
+    return -60 <= age <= settings.WEBHOOK_MAX_AGE_SECONDS
+
+
 @router.post('/razorpay')
 async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
     signature = request.headers.get('x-razorpay-signature', '')
+    if settings.REQUIRE_WEBHOOK_SIGNATURE and not settings.RAZORPAY_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail='Webhook secret is not configured')
     if settings.RAZORPAY_WEBHOOK_SECRET:
         expected = hmac.new(settings.RAZORPAY_WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
+        if not signature or not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=400, detail='Invalid signature')
 
     try:
@@ -36,26 +50,43 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail='Invalid JSON')
 
-    event_id = request.headers.get('x-razorpay-event-id') or event.get('id') or f'evt_{uuid.uuid4().hex}'
+    if not _created_at_is_fresh(event):
+        raise HTTPException(status_code=400, detail='Webhook event is stale or has an invalid created_at timestamp')
+
+    event_id = request.headers.get('x-razorpay-event-id') or event.get('id')
+    if not event_id:
+        raise HTTPException(status_code=400, detail='Missing Razorpay event id')
     event_name = event.get('event', '')
     entity = _payment_entity(event)
     payment_id = entity.get('id', 'unknown')
 
-    if db.query(AuditLog).filter(AuditLog.event_id == event_id).first():
+    existing_event = db.query(AuditLog).filter(AuditLog.event_id == event_id).first()
+    if existing_event:
         return {'status': 'ignored', 'reason': 'duplicate_event', 'event_id': event_id}
 
     status = entity.get('status', 'pending')
-    db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=event_id, payment_id=payment_id, action=event_name or 'WEBHOOK_RECEIVED', outcome=status))
+    event_log = AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=event_id, payment_id=payment_id, action=event_name or 'WEBHOOK_RECEIVED', outcome=status)
+    db.add(event_log)
     db.commit()
 
     if status in {'captured', 'authorized', 'success'}:
         payment = db.query(Payment).filter(Payment.id == payment_id).first()
         if payment:
             payment.status = PaymentStatus.SUCCESS
+            pending = db.query(ExecutionRecord).join(PolicyDecisionRecord, ExecutionRecord.policy_decision_id == PolicyDecisionRecord.id).join(RecoveryCase, PolicyDecisionRecord.recovery_case_id == RecoveryCase.id).filter(
+                RecoveryCase.payment_id == payment_id,
+                ExecutionRecord.status.in_(['PENDING', 'PENDING_HUMAN_REVIEW', 'RECOVERY_ACTION_READY']),
+            ).all()
+            for execution in pending:
+                execution.status = 'CANCELLED_LATE_SUCCESS'
+                execution.result_details = {**(execution.result_details or {}), 'reason': 'Payment succeeded after an earlier failure; stale recovery action cancelled.'}
+            event_log.outcome = 'payment_state_updated'
             db.commit()
-        return {'status': 'accepted', 'event_id': event_id, 'action': 'payment_state_updated'}
+        return {'status': 'accepted', 'event_id': event_id, 'action': 'payment_state_updated', 'late_recovery_actions_cancelled': len(pending) if payment else 0}
 
     if status != 'failed' or payment_id == 'unknown':
+        event_log.outcome = 'no_recovery_needed'
+        db.commit()
         return {'status': 'accepted', 'event_id': event_id, 'action': 'no_recovery_needed'}
 
     payment = db.query(Payment).filter(Payment.id == payment_id).first()
@@ -103,7 +134,8 @@ async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
     db.commit()
 
     exec_res = executor.execute(db, pcase, policy['decision'], action, policy_id)
-    db.add(AuditLog(id=f'audit_{uuid.uuid4().hex}', event_id=event_id, payment_id=payment.id, action=action, outcome=exec_res['status']))
+    event_log.action = action
+    event_log.outcome = exec_res['status']
     db.commit()
 
     return {'status': 'processed', 'event_id': event_id, 'case_id': case_id, 'risk': risk, 'diagnosis': diagnosis, 'strategy': strat, 'communication': communication, 'policy': policy, 'execution': exec_res}
