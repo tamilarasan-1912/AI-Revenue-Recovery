@@ -7,7 +7,7 @@ from ..database import get_db
 
 router = APIRouter()
 
-APP_VERSION = '1.5.0'
+APP_VERSION = '1.5.1'
 
 
 def _build_info() -> dict[str, str]:
