@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -5,6 +6,16 @@ from ..config import settings
 from ..database import get_db
 
 router = APIRouter()
+
+APP_VERSION = '1.5.0'
+
+
+def _build_info() -> dict[str, str]:
+    return {
+        'version': APP_VERSION,
+        'git_commit': os.getenv('RENDER_GIT_COMMIT', 'local')[:40],
+        'git_branch': os.getenv('RENDER_GIT_BRANCH', 'local'),
+    }
 
 
 @router.get('/live')
@@ -15,7 +26,7 @@ def liveness():
     not depend on a slow/unavailable external dependency, otherwise a healthy
     application process can be removed from traffic before the database recovers.
     """
-    return {'status': 'alive', 'version': '1.5.0'}
+    return {'status': 'alive', **_build_info()}
 
 
 @router.get('/health')
@@ -33,7 +44,7 @@ def health(db: Session = Depends(get_db)):
         'webhook_signature_required': settings.REQUIRE_WEBHOOK_SIGNATURE,
         'llm_provider': settings.LLM_PROVIDER,
         'sqlite_fallback_enabled': settings.ALLOW_SQLITE_FALLBACK,
-        'version': '1.5.0',
+        **_build_info(),
     }
 
 
