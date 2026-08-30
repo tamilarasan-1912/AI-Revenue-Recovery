@@ -7,7 +7,7 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/system/health
+    healthCheckPath: /api/system/live
     envVars:
       - key: DATABASE_URL
         fromDatabase:
