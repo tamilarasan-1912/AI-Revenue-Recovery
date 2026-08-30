@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
-import { Download, FlaskConical, SlidersHorizontal, Upload, Database, Info, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Download, FlaskConical, SlidersHorizontal, Upload, Database, Info, CheckCircle2, AlertTriangle, Server } from 'lucide-react'
 
 type Row = Record<string, string | number | boolean>
-type Result = { records: number; revenueAtRisk: number; baselineRecovered: number; aiRecovered: number; recoveryRate: number; incremental: number; policy: { allow: number; review: number; stop: number } }
+type Result = { records: number; revenueAtRisk: number; baselineRecovered: number; aiRecovered: number; recoveryRate: number; incremental: number; policy: { allow: number; review: number; stop: number }; trainingSize?: number; protocol?: string; source?: 'backend' | 'offline' }
 
+const API = import.meta.env.VITE_API_URL || '/api'
 const money = (v: number) => `₹${Math.round(v || 0).toLocaleString('en-IN')}`
 const pct = (v: number) => `${(v || 0).toFixed(1)}%`
 
@@ -45,7 +46,7 @@ function evaluate(rows: Row[], seed = 42): Result {
     else review++
   })
   const recoveryRate = revenueAtRisk ? (aiRecovered / revenueAtRisk) * 100 : 0
-  return { records: rows.length, revenueAtRisk, baselineRecovered, aiRecovered, recoveryRate, incremental: aiRecovered - baselineRecovered, policy: { allow, review, stop } }
+  return { records: rows.length, revenueAtRisk, baselineRecovered, aiRecovered, recoveryRate, incremental: aiRecovered - baselineRecovered, policy: { allow, review, stop }, source: 'offline', protocol: 'offline deterministic fallback — not the ML benchmark' }
 }
 
 const syntheticRows = (size: number): Row[] => Array.from({ length: size }, (_, i) => {
@@ -62,10 +63,33 @@ export default function SimulationSafe() {
   const [busy, setBusy] = useState(false)
 
   const displayResult = useMemo(() => result, [result])
-  const runBenchmark = () => { setBusy(true); setMessage(''); window.setTimeout(() => { setResult(evaluate(syntheticRows(size))); setBusy(false) }, 180) }
+  const runBenchmark = async () => {
+    setBusy(true); setMessage('Running the held-out ML benchmark…')
+    try {
+      const response = await fetch(`${API}/simulation/run-benchmark?dataset_size=${size}&seed=42`, { method: 'POST', headers: { Accept: 'application/json' } })
+      const raw = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error((raw as any)?.detail || `Benchmark request failed (${response.status})`)
+      setResult({
+        records: Number(raw.dataset_size || 0),
+        revenueAtRisk: Number(raw.revenue_at_risk || 0),
+        baselineRecovered: Number(raw.baseline?.revenue_recovered || 0),
+        aiRecovered: Number(raw.recoverai?.revenue_recovered || 0),
+        recoveryRate: Number(raw.recoverai?.revenue_recovery_rate || 0),
+        incremental: Number(raw.incremental_revenue || 0),
+        policy: { allow: Number(raw.recoverai?.policy_decisions?.ALLOW || 0), review: Number(raw.recoverai?.human_reviews || 0), stop: Number(raw.recoverai?.unsafe_actions_blocked || 0) },
+        trainingSize: Number(raw.training_dataset_size || 0),
+        protocol: raw.evaluation_protocol,
+        source: 'backend',
+      })
+      setMessage('Held-out ML benchmark completed by the RecoverAI backend.')
+    } catch (e) {
+      setResult(evaluate(syntheticRows(size)))
+      setMessage(`Backend benchmark unavailable. Showing the isolated offline fallback instead: ${e instanceof Error ? e.message : 'request failed'}`)
+    } finally { setBusy(false) }
+  }
   const evaluateDataset = () => {
     if (!rows.length) { setMessage('Upload a CSV dataset first.'); return }
-    setBusy(true); window.setTimeout(() => { setResult(evaluate(rows)); setBusy(false) }, 180)
+    setBusy(true); window.setTimeout(() => { setResult(evaluate(rows)); setBusy(false); setMessage('Dataset evaluated locally. Upload the labelled dataset to the backend for ML-backed evidence.') }, 180)
   }
   const upload = (file?: File) => {
     if (!file) return
@@ -76,7 +100,7 @@ export default function SimulationSafe() {
   }
   const exportReport = () => {
     if (!displayResult) { setMessage('Run a benchmark or evaluate a dataset before exporting.'); return }
-    const blob = new Blob([JSON.stringify({ generated_at: new Date().toISOString(), dataset_source: rows.length ? 'uploaded_csv_local' : 'synthetic_benchmark_local', ...displayResult }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ generated_at: new Date().toISOString(), dataset_source: rows.length ? 'uploaded_csv_local' : displayResult.source === 'backend' ? 'synthetic_benchmark_backend' : 'synthetic_benchmark_offline', ...displayResult }, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'recoverai-simulation-report.json'; a.click(); URL.revokeObjectURL(url)
   }
 
@@ -92,9 +116,9 @@ export default function SimulationSafe() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#45464d', fontSize: 13, marginBottom: 24 }}><Info size={16} color="#0058be"/> Synthetic / simulated evidence — no real-money movement.</div>
       {message && <div style={{ marginBottom: 18, padding: 12, borderRadius: 7, background: '#eef5ff', border: '1px solid #bfd7ff', display: 'flex', gap: 8, alignItems: 'center' }}><Info size={16}/>{message}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 18 }}>
-        <section style={card}><SlidersHorizontal size={22} color="#0058be"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Synthetic Benchmark</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Generate a controlled, reproducible cohort without contacting a payment provider.</p><label style={{ fontSize: 12, fontWeight: 700 }}>COHORT SIZE<input type="number" min={100} max={100000} value={size} onChange={e => setSize(Math.max(100, Math.min(100000, Number(e.target.value) || 100)))} style={{ display: 'block', width: '100%', marginTop: 7, height: 38, border: '1px solid #c7cbd1', borderRadius: 6, padding: '0 10px', boxSizing: 'border-box' }}/></label><button onClick={runBenchmark} disabled={busy} style={{ ...button, width: '100%', marginTop: 14, background: '#0058be', color: '#fff', borderColor: '#0058be' }}>{busy ? 'Running…' : 'Run Benchmark'}</button></section>
-        <section style={{ ...card, borderStyle: 'dashed', cursor: 'pointer' }} onClick={() => inputRef.current?.click()}><Upload size={22} color="#0058be"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Upload Dataset</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Choose a CSV with payment_id, amount, failure_reason, retry_count and is_recoverable.</p><input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={e => upload(e.target.files?.[0])}/><button style={{ ...button, width: '100%' }}>Choose CSV</button></section>
-        <section style={card}><Database size={22} color="#176b4c"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Dataset Evaluation</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Evaluate the active uploaded CSV locally through the same deterministic recovery-policy logic.</p><div style={{ fontSize: 13, margin: '14px 0', fontWeight: 700 }}>{rows.length ? `${rows.length.toLocaleString()} rows loaded` : 'No dataset loaded'}</div><button onClick={evaluateDataset} disabled={busy} style={{ ...button, width: '100%' }}>{busy ? 'Running…' : 'Evaluate Dataset'}</button></section>
+        <section style={card}><SlidersHorizontal size={22} color="#0058be"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Synthetic Benchmark</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Generate a controlled cohort. The button first uses the backend held-out ML benchmark; it falls back to an explicitly labelled offline demo only if the backend is unavailable.</p><label style={{ fontSize: 12, fontWeight: 700 }}>COHORT SIZE<input type="number" min={100} max={100000} value={size} onChange={e => setSize(Math.max(100, Math.min(100000, Number(e.target.value) || 100)))} style={{ display: 'block', width: '100%', marginTop: 7, height: 38, border: '1px solid #c7cbd1', borderRadius: 6, padding: '0 10px', boxSizing: 'border-box' }}/></label><button onClick={() => void runBenchmark()} disabled={busy} style={{ ...button, width: '100%', marginTop: 14, background: '#0058be', color: '#fff', borderColor: '#0058be' }}>{busy ? 'Running…' : 'Run Held-out Benchmark'}</button></section>
+        <section style={{ ...card, borderStyle: 'dashed', cursor: 'pointer' }} onClick={() => inputRef.current?.click()}><Upload size={22} color="#0058be"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Upload Dataset</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Choose a labelled CSV with payment_id, amount, failure_reason, retry_count and is_recoverable for evaluation.</p><input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={e => upload(e.target.files?.[0])}/><button style={{ ...button, width: '100%' }}>Choose CSV</button></section>
+        <section style={card}><Database size={22} color="#176b4c"/><h2 style={{ fontSize: 17, marginBottom: 8 }}>Dataset Evaluation</h2><p style={{ color: '#656a73', fontSize: 13, lineHeight: 1.6 }}>Evaluate an uploaded labelled cohort locally. Operational payment events do not require the ground-truth label.</p><div style={{ fontSize: 13, margin: '14px 0', fontWeight: 700 }}>{rows.length ? `${rows.length.toLocaleString()} rows loaded` : 'No dataset loaded'}</div><button onClick={evaluateDataset} disabled={busy} style={{ ...button, width: '100%' }}>{busy ? 'Running…' : 'Evaluate Dataset'}</button></section>
       </div>
       {displayResult && <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginTop: 24 }}>
@@ -102,7 +126,7 @@ export default function SimulationSafe() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 18, marginTop: 18 }}>
           <section style={card}><h2 style={{ fontSize: 18, marginTop: 0 }}>Recovery Evidence</h2><div style={{ display: 'grid', gap: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Baseline recovery</span><b>{money(displayResult.baselineRecovered)}</b></div><div style={{ height: 10, background: '#e7e9ed', borderRadius: 20 }}><div style={{ width: `${Math.min(100, displayResult.baselineRecovered / Math.max(1, displayResult.revenueAtRisk) * 100)}%`, height: '100%', background: '#777b83', borderRadius: 20 }}/></div><div style={{ display: 'flex', justifyContent: 'space-between' }}><span>RecoverAI recovery</span><b>{money(displayResult.aiRecovered)}</b></div><div style={{ height: 10, background: '#e7e9ed', borderRadius: 20 }}><div style={{ width: `${Math.min(100, displayResult.aiRecovered / Math.max(1, displayResult.revenueAtRisk) * 100)}%`, height: '100%', background: '#287bea', borderRadius: 20 }}/></div></div></section>
-          <section style={card}><h2 style={{ fontSize: 18, marginTop: 0 }}>Safety Matrix</h2><p><CheckCircle2 size={15} style={{ verticalAlign: 'middle' }}/> Auto-Allow <b style={{ float: 'right' }}>{displayResult.policy.allow.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Human Review <b style={{ float: 'right' }}>{displayResult.policy.review.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Auto-Stop <b style={{ float: 'right' }}>{displayResult.policy.stop.toLocaleString()}</b></p><p style={{ color: '#656a73', fontSize: 12 }}>{displayResult.records.toLocaleString()} simulations evaluated.</p></section>
+          <section style={card}><h2 style={{ fontSize: 18, marginTop: 0 }}>Safety Matrix</h2><p><CheckCircle2 size={15} style={{ verticalAlign: 'middle' }}/> Auto-Allow <b style={{ float: 'right' }}>{displayResult.policy.allow.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Human Review <b style={{ float: 'right' }}>{displayResult.policy.review.toLocaleString()}</b></p><p><AlertTriangle size={15} style={{ verticalAlign: 'middle' }}/> Auto-Stop <b style={{ float: 'right' }}>{displayResult.policy.stop.toLocaleString()}</b></p><p style={{ color: '#656a73', fontSize: 12 }}>{displayResult.records.toLocaleString()} simulations evaluated.</p>{displayResult.source === 'backend' && <p style={{ color: '#176b4c', fontSize: 12, fontWeight: 800 }}><Server size={14} style={{ verticalAlign: 'middle', marginRight: 5 }}/>Backend held-out evidence · training cohort {displayResult.trainingSize?.toLocaleString()}</p>}{displayResult.protocol && <p style={{ color: '#656a73', fontSize: 11 }}>{displayResult.protocol}</p>}</section>
         </div>
       </>}
       <div style={{ marginTop: 22, padding: 13, border: '1px solid #d7dbe0', borderRadius: 8, background: '#fff', fontSize: 12, color: '#656a73' }}><FlaskConical size={15} style={{ verticalAlign: 'middle', marginRight: 7 }}/> Simulation mode is isolated from live payment execution. No real-money transaction is initiated by this page.</div>
