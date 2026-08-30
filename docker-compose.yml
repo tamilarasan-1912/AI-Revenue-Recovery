@@ -23,7 +23,7 @@ services:
       LLM_PROVIDER: deterministic
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
       ALLOW_SQLITE_FALLBACK: "false"
-      REQUIRE_WEBHOOK_SIGNATURE: ${REQUIRE_WEBHOOK_SIGNATURE:-true}
+      REQUIRE_WEBHOOK_SIGNATURE: ${REQUIRE_WEBHOOK_SIGNATURE:-false}
     healthcheck:
       test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/system/health', timeout=3)"]
       interval: 10s
