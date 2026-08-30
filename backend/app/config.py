@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str = ''
     RAZORPAY_WEBHOOK_SECRET: str = ''
     ENABLE_RAZORPAY_TEST_ACTIONS: bool = False
+    ALLOW_SQLITE_FALLBACK: bool = False
+    REQUIRE_WEBHOOK_SIGNATURE: bool = True
+    WEBHOOK_MAX_AGE_SECONDS: int = 300
     LLM_PROVIDER: str = 'deterministic'
     LLM_BASE_URL: str = ''
     LLM_API_KEY: str = ''
