@@ -1,554 +1,248 @@
-Recovery AI – AI-Powered Payment Recovery System
+# RecoverAI — AI-Powered Revenue Recovery
 
-📌 Project Overview
+RecoverAI is a payment-recovery platform that combines Machine Learning, AI decision agents, deterministic safety policies, and controlled execution to decide what should happen after a payment failure.
 
-Recovery AI is an AI-based payment recovery system that helps identify failed and suspicious payment transactions and decides whether a failed payment can be recovered.
+> **AI recommends. The deterministic Policy Engine authorizes. The Executor performs only bounded actions.**
 
-The system uses Machine Learning to analyze payment transaction data and find patterns in failed payments. Based on the prediction, the system can identify recoverable transactions and suggest the best recovery action.
+## Architecture
 
-The main goal is to reduce payment failures and improve successful payment recovery.
+![RecoverAI System Architecture](./docs/diagrams/architecture.svg)
 
----
+## Payment Recovery Flow
 
-🎯 Problem Statement
+![RecoverAI Payment Recovery Flow](./docs/diagrams/flow.svg)
 
-Online payments can fail because of different reasons such as:
+## ML Pipeline
 
-- Bank or network issues
-- Insufficient balance
-- Incorrect payment details
-- Temporary technical problems
-- Payment gateway problems
-- Risk or fraud-related issues
+![RecoverAI ML Pipeline](./docs/diagrams/ml_pipeline.svg)
 
-Not every failed payment should be treated in the same way.
+## How it works
 
-Some payments can be recovered by retrying the payment, changing the payment method, or asking the customer to complete the payment again.
+1. A payment failure arrives through a Razorpay webhook or an uploaded CSV dataset.
+2. Webhooks are checked for JSON validity, freshness, event ID duplication, and optional HMAC signature verification.
+3. The failed payment is stored and a recovery context is created.
+4. The Risk Agent analyses risk and fraud signals.
+5. The Diagnosis layer classifies the failure.
+6. The Strategy Agent recommends an action such as `RETRY`, `PAYMENT_LINK`, `HUMAN_ESCALATION`, `WAIT`, or `STOP`.
+7. For dataset-based recovery, the ML model supplies recoverability probability and expected recovery value.
+8. The deterministic Policy Engine checks allowed actions, fraud, confidence, retry limits, recovery-plan rules, and economic thresholds.
+9. The Recovery Executor performs a controlled simulation, human-review transition, or Razorpay **Test Mode** payment-link action.
+10. Execution and webhook events are recorded for audit and analytics.
 
-Recovery AI helps identify these cases automatically.
+## Machine Learning
 
----
+The implementation in `backend/app/ml_model.py` uses two scikit-learn models:
 
-💡 Proposed Solution
+- `RandomForestClassifier` — predicts `recoverable` vs `not_recoverable` and exposes `recoverability_probability` and confidence.
+- `RandomForestRegressor` — predicts expected recovery amount and recovery rate.
 
-Recovery AI takes payment transaction information as input and uses a Machine Learning model to classify the transaction.
+The classifier uses 300 trees, max depth 14, minimum samples per leaf 2, balanced class weights, and random seed 42. If the uploaded data contains only one target class, the code safely falls back to `DummyClassifier`.
 
-The system mainly performs these steps:
+### Features
 
-1. Collect payment transaction data.
-2. Clean and preprocess the data.
-3. Extract useful features.
-4. Use a Machine Learning model to predict the payment result.
-5. Identify failed and potentially recoverable transactions.
-6. Recommend a suitable recovery action.
-7. Display the result through the application dashboard.
+Core features include `failure_reason`, `amount`, `retry_count`, `amount_log`, and `retry_pressure`. Optional features include payment method, decline code, error source/step, currency, recurring-payment state, authentication requirement, card lifecycle, customer tenure, previous payment success rate, days past due, payment history counts, delays, outstanding amount, reminders, and reminder response rate.
 
----
+The model also derives `outstanding_to_amount` and `payment_history_risk`.
 
-🏗️ System Architecture
+## Recovery Playbook
 
-flowchart TB
+`backend/app/recovery_playbook.py` applies deterministic failure handling.
 
-    A[Customer Payment] --> B[Payment Gateway]
+- **Fraud/risk:** stop automatic recovery and flag for review.
+- **Authentication required:** request customer authentication and use a payment-link flow.
+- **Hard decline / invalid instrument:** avoid repeated retries and request a payment-method update.
+- **Soft/temporary failure:** use bounded delayed retries when safe.
+- **Unknown failure:** avoid blind retry and escalate for diagnosis.
 
-    B --> C{Payment Result}
+Default retry delays are **24, 72 and 168 hours**, with a **30-day rescue window**.
 
-    C -->|Successful| D[Successful Transaction]
-    C -->|Failed| E[Failed Transaction]
+ML guardrails include:
 
-    E --> F[Transaction Data]
+- probability `< 0.30` → customer-action/payment-link path
+- probability `< 0.65` → human review path
+- otherwise → continue through retry and policy constraints
 
-    F --> G[Data Preprocessing]
+## Safety Architecture
 
-    G --> H[Feature Engineering]
+The Policy Engine is deliberately deterministic. It can block unsupported actions, stop fraud cases, enforce retry limits, require human review for low confidence, reject retry when the recovery plan disallows it, and stop interventions whose expected recovery value is below the configured intervention cost.
 
-    H --> I[Machine Learning Model]
+The Executor is also bounded:
 
-    I --> J{Prediction}
+- normal recovery execution is simulation-only;
+- external payment-link creation is permitted only when Razorpay Test Mode is enabled;
+- live Razorpay keys beginning with `rzp_live_` are rejected by the safety boundary;
+- execution records use idempotency protection;
+- pending recovery actions can be cancelled when a later success webhook arrives.
 
-    J -->|Recoverable| K[Recovery Engine]
-    J -->|Not Recoverable| L[Failure Analysis]
+## Backend
 
-    K --> M[Recovery Recommendation]
+The FastAPI application is defined in `backend/app/main.py` and exposes route groups for:
 
-    M --> N[Retry Payment]
-    M --> O[Suggest Another Payment Method]
-    M --> P[Customer Notification]
+- `/api/webhooks`
+- `/api/analytics`
+- `/api/audit`
+- `/api/simulation`
+- `/api/review`
+- `/api/recovery`
+- `/api/failure-injection`
+- `/api/system`
+- `/api/payments`
 
-    L --> Q[Show Failure Reason]
+Important simulation endpoints include:
 
-    N --> R[Dashboard]
-    O --> R
-    P --> R
-    Q --> R
+- `POST /api/simulation/run-dataset`
+- `POST /api/simulation/import-dataset`
+- `POST /api/simulation/predict-recovery`
+- `POST /api/simulation/predict-batch`
+- `POST /api/simulation/run`
+- `POST /api/simulation/run-benchmark`
+- `POST /api/simulation/run-multi-seed`
+- `GET /api/simulation/evaluate-database`
 
-    R --> S[Monitoring & Analytics]
+The uploaded dataset requires `payment_id`, `amount`, `failure_reason`, `retry_count`, and `is_recoverable`. Uploads are validated and bounded; ML training is capped at 10,000 active rows and interactive evaluation/prediction is bounded to keep requests practical.
 
----
+## Database
 
-🔄 Application Flow
+PostgreSQL 15 is the primary database. SQLAlchemy is used for persistence. Important entities include:
 
-flowchart TD
+- `Payment`
+- `RecoveryCase`
+- `PolicyDecisionRecord`
+- `ExecutionRecord`
+- `AuditLog`
+- `SimulationRun`
+- `ImportedDatasetRow`
 
-    A[Start] --> B[Payment Attempt]
+The database layer includes controlled SQLite fallback/demo behaviour for supported degraded or dataset-demo scenarios.
 
-    B --> C[Transaction Processing]
+## Frontend
 
-    C --> D{Payment Successful?}
+The frontend is React 18 + TypeScript with Vite. It uses React Router, Axios, Recharts, Lucide React and Tailwind CSS. Current application components include payment, recovery and simulation interfaces plus the redesigned application UI.
 
-    D -->|Yes| E[Mark as Successful]
-    E --> F[Store Transaction]
-    F --> Z[End]
+## Project Structure
 
-    D -->|No| G[Mark as Failed]
-
-    G --> H[Collect Transaction Details]
-
-    H --> I[Preprocess Data]
-
-    I --> J[ML Model]
-
-    J --> K{Can Payment be Recovered?}
-
-    K -->|Yes| L[Generate Recovery Recommendation]
-
-    L --> M{Recovery Method}
-
-    M -->|Retry| N[Retry Payment]
-    M -->|Alternative Method| O[Suggest Alternative Payment]
-    M -->|Customer Action| P[Notify Customer]
-
-    N --> Q{Payment Successful?}
-    O --> Q
-    P --> Q
-
-    Q -->|Yes| R[Payment Recovered]
-    Q -->|No| S[Update Recovery Status]
-
-    K -->|No| T[Mark as Non-Recoverable]
-
-    R --> U[Update Dashboard]
-    S --> U
-    T --> U
-
-    U --> Z[End]
-
----
-
-🤖 Machine Learning Pipeline
-
-flowchart LR
-
-    A[Raw Transaction Dataset]
-    --> B[Data Cleaning]
-
-    B --> C[Handle Missing Values]
-
-    C --> D[Feature Selection]
-
-    D --> E[Feature Encoding]
-
-    E --> F[Train/Test Split]
-
-    F --> G[Random Forest Model]
-
-    G --> H[Model Evaluation]
-
-    H --> I[Prediction]
-
-    I --> J[Recoverable / Non-Recoverable]
-
----
-
-🧠 Machine Learning Model
-
-The project uses Random Forest as the main Machine Learning model.
-
-Random Forest was selected because:
-
-- It works well with tabular payment data.
-- It can handle many different features.
-- It can learn non-linear relationships.
-- It is less likely to overfit compared with a single Decision Tree.
-- It does not require extremely high-end hardware for this type of dataset.
-- It provides useful feature importance information.
-
-Example Input Features
-
-The model can use transaction-related features such as:
-
-Feature| Description
-Transaction Amount| Amount of the payment
-Payment Method| UPI, Card, Net Banking, etc.
-Transaction Time| Time of payment
-Failure Reason| Reason for payment failure
-Bank Response| Response received from bank
-Retry Count| Number of previous attempts
-Device Information| Device used for payment
-Transaction History| Previous transaction behavior
-
-«The exact features depend on the dataset used for training.»
-
----
-
-🔍 Prediction Process
-
-The ML model analyzes the transaction and produces a prediction.
-
-flowchart TD
-
-    A[Failed Payment] --> B[Transaction Features]
-
-    B --> C[Random Forest Model]
-
-    C --> D{Prediction}
-
-    D -->|Recoverable| E[Recovery Score]
-
-    D -->|Not Recoverable| F[Non-Recoverable]
-
-    E --> G[Recovery Engine]
-
-    G --> H[Best Recovery Action]
-
-    H --> I[Retry / Alternative Payment / Customer Action]
-
----
-
-⚙️ Recovery Engine
-
-The Recovery Engine uses the ML prediction and transaction information to decide the next action.
-
-Possible actions include:
-
-1. Payment Retry
-
-If the failure appears temporary, the system can recommend retrying the transaction.
-
-2. Alternative Payment Method
-
-If the current payment method has a problem, the system can recommend another available payment method.
-
-3. Customer Notification
-
-The customer can be informed about the payment failure and the next action required.
-
-4. Non-Recoverable Classification
-
-Some transactions may not be suitable for automatic recovery.
-
-These transactions can be marked for further analysis instead of repeatedly retrying them.
-
----
-
-📊 Dashboard
-
-The dashboard provides information about payment performance and recovery.
-
-Main Dashboard Information
-
-- Total transactions
-- Successful payments
-- Failed payments
-- Recoverable payments
-- Recovered payments
-- Recovery rate
-- Failure reasons
-- Recovery recommendations
-- Transaction-level prediction
-
-Example dashboard flow:
-
-flowchart TB
-
-    A[Transaction Database] --> B[Analytics Layer]
-
-    B --> C[Dashboard]
-
-    C --> D[Total Transactions]
-    C --> E[Success Rate]
-    C --> F[Failure Rate]
-    C --> G[Recovery Rate]
-    C --> H[Failed Payment Analysis]
-    C --> I[Recovery Recommendations]
-
----
-
-🛠️ Technology Stack
-
-Component| Technology
-Programming Language| Python
-Machine Learning| Scikit-learn
-ML Algorithm| Random Forest
-Data Processing| Pandas
-Numerical Processing| NumPy
-Data Visualization| Matplotlib / Plotly
-Frontend| Web-based UI
-Backend| Python-based API
-Database| Project-dependent
-Version Control| Git & GitHub
-
----
-
-📁 Project Structure
-
-Recovery-AI/
-│
-├── data/
-│   ├── raw/
-│   └── processed/
-│
-├── models/
-│   └── recovery_model.pkl
-│
-├── notebooks/
-│   └── model_training.ipynb
-│
-├── src/
-│   ├── data_preprocessing.py
-│   ├── feature_engineering.py
-│   ├── train_model.py
-│   ├── predict.py
-│   └── recovery_engine.py
-│
+```text
+AI-Revenue-Recovery/
 ├── backend/
-│   └── app.py
-│
+│   ├── app/
+│   │   ├── agents/          # risk, diagnosis, strategy, communication
+│   │   ├── api/             # FastAPI route modules
+│   │   ├── engine/          # policy, executor, idempotency
+│   │   ├── simulation/      # evaluation and benchmarking
+│   │   ├── database.py
+│   │   ├── ml_model.py
+│   │   ├── models.py
+│   │   └── recovery_playbook.py
+│   ├── migrations/
+│   ├── scripts/
+│   ├── tests/
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── frontend/
-│   └── ...
-│
-├── requirements.txt
-│
-├── README.md
-│
-└── .gitignore
-
----
-
-🔄 Complete System Flow
-
-flowchart TD
-
-    A[Customer] --> B[Payment]
-
-    B --> C[Payment Gateway]
-
-    C --> D{Transaction Status}
-
-    D -->|Success| E[Successful Payment]
-
-    D -->|Failed| F[Failed Payment]
-
-    F --> G[Transaction Data]
-
-    G --> H[Preprocessing]
-
-    H --> I[Feature Engineering]
-
-    I --> J[Random Forest ML Model]
-
-    J --> K{Recoverable?}
-
-    K -->|No| L[Non-Recoverable]
-
-    K -->|Yes| M[Recovery Engine]
-
-    M --> N[Recovery Score]
-
-    N --> O[Select Recovery Action]
-
-    O --> P[Retry Payment]
-
-    O --> Q[Alternative Payment Method]
-
-    O --> R[Customer Notification]
-
-    P --> S{Recovered?}
-    Q --> S
-    R --> S
-
-    S -->|Yes| T[Recovered Payment]
-
-    S -->|No| U[Update Transaction Status]
-
-    E --> V[Analytics Dashboard]
-    L --> V
-    T --> V
-    U --> V
-
----
-
-🔐 Fraud and Risk Considerations
-
-Payment recovery should not blindly retry every failed transaction.
-
-The system can consider:
-
-- Transaction history
-- Failure reason
-- Retry count
-- Transaction amount
-- Risk indicators
-- Payment method
-- Bank response
-- Previous successful/failed attempts
-
-This helps avoid unnecessary retries and reduces the possibility of repeatedly processing suspicious transactions.
-
----
-
-📈 Expected Benefits
-
-Recovery AI aims to provide:
-
-- Reduced payment failure impact
-- Better recovery of failed transactions
-- Faster identification of recoverable payments
-- Automated recovery recommendations
-- Better payment analytics
-- Reduced manual investigation
-- Improved customer payment experience
-
----
-
-🚀 Future Improvements
-
-The project can be extended with:
-
-AI-based Recovery Strategy
-
-Instead of only predicting recoverability, the system can learn which recovery action has the highest probability of success.
-
-Real-Time Prediction
-
-Connect the ML model with a payment system to make predictions immediately after a transaction failure.
-
-Explainable AI
-
-Show why the model classified a payment as recoverable or non-recoverable.
-
-Continuous Learning
-
-Use new transaction results to periodically retrain and improve the model.
-
-Advanced Models
-
-Experiment with:
-
-- XGBoost
-- LightGBM
-- Neural Networks
-- Gradient Boosting
-- Reinforcement Learning
-
-Payment Gateway Integration
-
-The system can be integrated with real payment gateway APIs to process recovery workflows.
-
----
-
-🧪 Model Evaluation
-
-The model can be evaluated using:
-
-- Accuracy
-- Precision
-- Recall
-- F1 Score
-- Confusion Matrix
-- ROC-AUC
-
-For payment recovery, precision and recall are important, because incorrectly classifying transactions can result in unnecessary retries or missed recovery opportunities.
-
----
-
-💻 Installation
-
-Clone the repository:
-
-git clone <your-repository-url>
-cd Recovery-AI
-
-Create a virtual environment:
-
-python -m venv venv
-
-Activate the environment.
-
-Windows
-
-venv\Scripts\activate
-
-Linux / macOS
-
-source venv/bin/activate
-
-Install dependencies:
-
+│   ├── src/
+│   ├── Dockerfile
+│   ├── package.json
+│   └── vite.config.ts
+├── docs/
+│   └── diagrams/
+│       ├── architecture.svg
+│       ├── flow.svg
+│       └── ml_pipeline.svg
+├── docker-compose.yml
+├── render.yaml
+├── .env.example
+└── README.md
+```
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, TypeScript, Vite |
+| Styling | Tailwind CSS |
+| Charts | Recharts |
+| HTTP | Axios |
+| Backend | FastAPI, Uvicorn |
+| ORM | SQLAlchemy |
+| Database | PostgreSQL 15 |
+| ML | scikit-learn |
+| Containerization | Docker / Docker Compose |
+| Payment integration | Razorpay Test Mode |
+
+## Run with Docker
+
+```bash
+docker compose up --build
+```
+
+Default local services:
+
+```text
+Frontend  http://localhost:3000
+Backend   http://localhost:8000
+Postgres  localhost:5432
+```
+
+## Run locally
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+# activate the environment
 pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
 
----
+### Frontend
 
-▶️ Running the Project
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-Train the Machine Learning model:
+Use `.env.example` as the starting point for environment configuration. Never commit real credentials or webhook secrets.
 
-python src/train_model.py
+## Testing
 
-Run prediction:
+```bash
+cd backend
+pytest
+```
 
-python src/predict.py
+## Design Principles
 
-Start the backend:
+1. **AI is advisory:** AI components return structured recommendations rather than direct execution commands.
+2. **Deterministic authorization:** the Policy Engine is the final safety gate.
+3. **Bounded recovery:** retries have limits and deliberate delays.
+4. **Human-in-the-loop:** uncertain cases can require reviewer approval.
+5. **Idempotent execution:** duplicate recovery actions are prevented.
+6. **Test-mode boundary:** external payment actions are restricted to Razorpay Test Mode.
+7. **Auditability:** webhook, policy, recovery and execution records are persisted.
 
-python backend/app.py
+## Why RecoverAI
 
-Then open the application in the browser.
+A failed payment is not automatically a payment that should be retried. RecoverAI separates two questions:
 
-«Update these commands according to the actual files and framework used in the project.»
+**Prediction:** *How likely is this payment to be recovered?*
 
----
+**Authorization:** *Is it safe and economically reasonable to perform the proposed recovery action?*
 
-📌 Example
+The ML layer answers the first question. The recovery playbook and deterministic Policy Engine control the second. This separation makes the system safer, more explainable, testable and auditable.
 
-Input
+## Future Extensions
 
-Transaction Amount: ₹2,500
-Payment Method: UPI
-Failure Reason: Bank Timeout
-Retry Count: 0
-Previous Successful Transactions: 5
+- probability calibration and explainable AI
+- richer transaction-history features
+- online model monitoring
+- learned recovery-action optimization
+- additional payment-provider adapters
+- asynchronous production job execution
+- stronger secret management and webhook enforcement
+- expanded offline and online evaluation
 
-ML Prediction
+## License
 
-Prediction: Recoverable
-
-Recovery Recommendation
-
-Recommended Action: Retry Payment
-
-The system can then attempt the recovery workflow and update the transaction status based on the result.
-
----
-
-👨‍💻 Project Goal
-
-The main goal of Recovery AI is to make payment recovery more intelligent by using Machine Learning to understand failed transactions and recommend the most suitable recovery action.
-
-Instead of treating every failed payment equally, the system tries to answer:
-
-«"Why did the payment fail, and is there a good chance that we can recover it?"»
-
----
-
-📜 License
-
-This project is created for educational, research, and demonstration purposes.
-
----
-
-⭐ Conclusion
-
-Recovery AI combines payment analytics, Machine Learning, and automated recovery logic to build an intelligent payment recovery system.
-
-The project demonstrates how AI can be used not only to detect payment failures but also to identify which failed transactions have a possibility of recovery and what action can be taken next.
+See `LICENSE` for the repository license.
